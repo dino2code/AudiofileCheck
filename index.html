@@ -10,28 +10,17 @@
 <style>
 /* Layout: a single-column test-bench readout — input on top, verdict as the instrument's result window, then the scope traces, then the raw readings. */
 :root {
-  --bg: #eef0ed; --surface: #ffffff; --well: #e3e7e3; --ink: #16201c; --muted: #5b6863; --line: #cfd6d1;
-  --accent: #b86200; --accent-ink: #ffffff;
-  --good: #2f7d4f; --warn: #a36a00; --bad: #b8372f; --info: #35628f;
-  --good-bg: #e2f1e7; --warn-bg: #f6ecd6; --bad-bg: #f7e1de; --info-bg: #e1eaf3;
-  --scope: #0d1311; --scope-grid: #26332e; --scope-text: #9fb0a8; --trace: #f2a541;
+  --bg: #0f1513; --surface: #171f1c; --well: #1e2824; --ink: #e2ebe7; --muted: #94a39d; --line: #2c3833;
+  --accent: #f2a541; --accent-ink: #1a1206;
+  --good: #63c48b; --warn: #e5b04a; --bad: #f07a70; --info: #7fb0e0;
+  --good-bg: #16301f; --warn-bg: #33280f; --bad-bg: #3a1a17; --info-bg: #142636;
+  --scope: #090d0c; --scope-grid: #22302b; --scope-text: #8fa199; --trace: #f2a541;
+  color-scheme: dark;
   --f-display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
   --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --r: 6px;
 }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --bg: #0f1513; --surface: #171f1c; --well: #1e2824; --ink: #e2ebe7; --muted: #94a39d; --line: #2c3833;
-  --accent: #f2a541; --accent-ink: #1a1206;
-  --good: #63c48b; --warn: #e5b04a; --bad: #f07a70; --info: #7fb0e0;
-  --good-bg: #16301f; --warn-bg: #33280f; --bad-bg: #3a1a17; --info-bg: #142636;
-  --scope: #090d0c; --scope-grid: #22302b; --scope-text: #8fa199; --trace: #f2a541; color-scheme: dark; } }
-:root[data-theme="dark"] {
-  --bg: #0f1513; --surface: #171f1c; --well: #1e2824; --ink: #e2ebe7; --muted: #94a39d; --line: #2c3833;
-  --accent: #f2a541; --accent-ink: #1a1206;
-  --good: #63c48b; --warn: #e5b04a; --bad: #f07a70; --info: #7fb0e0;
-  --good-bg: #16301f; --warn-bg: #33280f; --bad-bg: #3a1a17; --info-bg: #142636;
-  --scope: #090d0c; --scope-grid: #22302b; --scope-text: #8fa199; --trace: #f2a541; color-scheme: dark; }
 
 * { box-sizing: border-box; }
 body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--f-body); }
