@@ -1,0 +1,1553 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="description" content="Check whether audio files really are what they claim: real bit depth, sample rate, lossy sources, vinyl rips, mastering and a quality score. Runs in the browser; files never leave your device.">
+<title>AudioCheck</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a single-column test-bench readout — input on top, verdict as the instrument's result window, then the scope traces, then the raw readings. */
+:root {
+  --bg: #eef0ed; --surface: #ffffff; --well: #e3e7e3; --ink: #16201c; --muted: #5b6863; --line: #cfd6d1;
+  --accent: #b86200; --accent-ink: #ffffff;
+  --good: #2f7d4f; --warn: #a36a00; --bad: #b8372f; --info: #35628f;
+  --good-bg: #e2f1e7; --warn-bg: #f6ecd6; --bad-bg: #f7e1de; --info-bg: #e1eaf3;
+  --scope: #0d1311; --scope-grid: #26332e; --scope-text: #9fb0a8; --trace: #f2a541;
+  --f-display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --r: 6px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1513; --surface: #171f1c; --well: #1e2824; --ink: #e2ebe7; --muted: #94a39d; --line: #2c3833;
+  --accent: #f2a541; --accent-ink: #1a1206;
+  --good: #63c48b; --warn: #e5b04a; --bad: #f07a70; --info: #7fb0e0;
+  --good-bg: #16301f; --warn-bg: #33280f; --bad-bg: #3a1a17; --info-bg: #142636;
+  --scope: #090d0c; --scope-grid: #22302b; --scope-text: #8fa199; --trace: #f2a541; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0f1513; --surface: #171f1c; --well: #1e2824; --ink: #e2ebe7; --muted: #94a39d; --line: #2c3833;
+  --accent: #f2a541; --accent-ink: #1a1206;
+  --good: #63c48b; --warn: #e5b04a; --bad: #f07a70; --info: #7fb0e0;
+  --good-bg: #16301f; --warn-bg: #33280f; --bad-bg: #3a1a17; --info-bg: #142636;
+  --scope: #090d0c; --scope-grid: #22302b; --scope-text: #8fa199; --trace: #f2a541; color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--f-body); }
+.wrap { max-width: 980px; margin: 0 auto; padding-block: 20px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 20px; }
+h1, h2, h3 { font-family: var(--f-display); font-weight: 600; margin: 0; text-wrap: balance; letter-spacing: 0.01em; }
+.top { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 8px 24px; }
+.brand h1 { font-size: 2.1rem; line-height: 1; text-transform: uppercase; letter-spacing: 0.04em; }
+.brand h1 span { color: var(--accent); }
+.brand p { margin: 4px 0 0; color: var(--muted); }
+.privacy { font-size: 0.82rem; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.privacy::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--good); }
+
+.drop { position: relative; display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; justify-content: space-between; padding: 18px 20px; border: 1.5px dashed var(--line); border-radius: var(--r); background: var(--surface); transition: border-color .15s, background .15s; }
+.drop.over { border-color: var(--accent); background: var(--well); }
+.drop .msg { min-width: 0; }
+.drop strong { font-family: var(--f-display); font-size: 1.25rem; font-weight: 600; letter-spacing: 0.02em; }
+.drop small { display: block; color: var(--muted); }
+.btn { font: 600 0.95rem var(--f-body); border: 0; border-radius: var(--r); padding: 10px 18px; background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+.btn:focus-visible, .ghost:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.ghost { font: 500 0.85rem var(--f-body); background: transparent; color: var(--ink); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 12px; cursor: pointer; }
+#file { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; z-index: 2; }
+.drop:focus-within { border-color: var(--accent); }
+.drop:focus-within .btn { outline: 2px solid var(--ink); outline-offset: 2px; }
+.fallback { margin: -12px 0 0; font-size: 0.82rem; color: var(--muted); }
+.fallback a { color: var(--info); }
+.progress { height: 4px; background: var(--well); border-radius: 2px; overflow: hidden; }
+.progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.scorebox { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; padding:14px 20px; border-top:1px solid var(--line); }
+.scorebox b { font-size:1.6rem; font-variant-numeric: tabular-nums; }
+.scorebox span { color: var(--muted); font-size:0.88rem; font-variant-numeric: tabular-nums; }
+.status-line { font-size: 0.88rem; color: var(--muted); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.err { padding: 12px 16px; border-radius: var(--r); background: var(--bad-bg); color: var(--bad); }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+.result { display: grid; gap: 0; }
+.result-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+.fname { font-family: var(--f-mono); font-size: 0.9rem; min-width: 0; overflow-wrap: anywhere; }
+.fname em { font-style: normal; color: var(--muted); }
+.example-tag { font: 600 0.72rem var(--f-body); text-transform: uppercase; letter-spacing: 0.08em; color: var(--info); background: var(--info-bg); padding: 3px 8px; border-radius: 3px; }
+.verdict { display: grid; grid-template-columns: auto 1fr; gap: 16px 24px; padding: 20px; align-items: center; }
+@media (max-width: 640px) { .verdict { grid-template-columns: 1fr; } }
+.pill { font-family: var(--f-display); font-weight: 700; font-size: 1.05rem; text-transform: uppercase; letter-spacing: 0.08em; padding: 10px 16px; border-radius: var(--r); text-align: center; line-height: 1.15; min-width: 150px; }
+.pill small { display: block; font: 500 0.72rem var(--f-body); letter-spacing: 0.04em; text-transform: none; opacity: 0.9; }
+.pill.pass { background: var(--good-bg); color: var(--good); }
+.pill.maybe { background: var(--warn-bg); color: var(--warn); }
+.pill.fail { background: var(--bad-bg); color: var(--bad); }
+.pill.lossy, .chip.lossy, .pill.header, .chip.header { background: var(--info-bg); color: var(--info); }
+.pill.defective, .chip.defective, .pill.unreadable, .chip.unreadable, .chip.fail { background: var(--bad-bg); color: var(--bad); }
+.chip.pass { background: var(--good-bg); color: var(--good); } .chip.maybe { background: var(--warn-bg); color: var(--warn); }
+.chip { display: inline-block; font: 600 0.7rem var(--f-body); text-transform: uppercase; letter-spacing: 0.06em; padding: 3px 7px; border-radius: 3px; white-space: nowrap; }
+.batch-head { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; padding: 14px 20px 8px; }
+.batch-head h2 { font-size: 1.15rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.batch-head span { color: var(--muted); font-size: 0.88rem; flex: 1 1 auto; }
+.wrap > * { min-width: 0; }
+.tablewrap { overflow-x: auto; }
+.batch table { width: 100%; border-collapse: collapse; font-size: 0.86rem; min-width: 720px; }
+.batch th { text-align: left; font: 600 0.72rem var(--f-body); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); padding: 6px 12px; border-bottom: 1px solid var(--line); }
+.batch td { padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.batch td.mono { font-family: var(--f-mono); font-size: 0.8rem; overflow-wrap: anywhere; min-width: 130px; max-width: 240px; }
+.batch .num { text-align: right; font-family: var(--f-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.batch tbody tr { cursor: pointer; } .batch tbody tr:hover, .batch tbody tr.sel { background: var(--well); }
+.batch tbody tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.hint { margin: 0; padding: 8px 20px 14px; color: var(--muted); font-size: 0.82rem; }
+.headline { font-family: var(--f-display); font-size: 1.6rem; line-height: 1.15; font-weight: 600; }
+.cmp { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--line); }
+.cmp > div { padding: 14px 20px; min-width: 0; }
+.cmp > div + div { border-left: 1px solid var(--line); }
+.cmp h3 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
+.cmp p { margin: 0; font-family: var(--f-mono); font-size: 0.92rem; overflow-wrap: anywhere; }
+@media (max-width: 520px) { .cmp { grid-template-columns: 1fr; } .cmp > div + div { border-left: 0; border-top: 1px solid var(--line); } }
+
+.evidence { list-style: none; margin: 0; padding: 0; display: grid; }
+.evidence li { padding: 10px 20px 10px 17px; border-left: 3px solid var(--line); border-top: 1px solid var(--line); }
+.evidence li.good { border-left-color: var(--good); } .evidence li.warn { border-left-color: var(--warn); }
+.evidence li.bad { border-left-color: var(--bad); } .evidence li.info { border-left-color: var(--info); }
+.evidence li b { font: 600 0.72rem var(--f-body); text-transform: uppercase; letter-spacing: 0.08em; margin-right: 8px; }
+.evidence li.good b { color: var(--good); } .evidence li.warn b { color: var(--warn); } .evidence li.bad b { color: var(--bad); } .evidence li.info b { color: var(--info); }
+
+.section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.section-title h2 { font-size: 1.3rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.section-title span { color: var(--muted); font-size: 0.85rem; }
+.scope { background: var(--scope); border-radius: var(--r); padding: 10px; display: grid; gap: 8px; }
+.scope canvas { width: 100%; display: block; }
+#specgram { height: 220px; } #curve { height: 200px; }
+@media (max-width: 520px) { #specgram { height: 170px; } #curve { height: 170px; } }
+
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 820px) { .grid3 { grid-template-columns: 1fr; } }
+.readings { padding: 14px 18px; min-width: 0; }
+.readings h3 { font-size: 1rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; color: var(--muted); }
+.readings dl { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; font-size: 0.88rem; }
+.readings dt { color: var(--muted); }
+.readings dd { margin: 0; font-family: var(--f-mono); font-variant-numeric: tabular-nums; text-align: right; overflow-wrap: anywhere; }
+.mastering { display: grid; }
+.m-head { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: baseline; padding: 14px 18px 0; }
+.m-head h2 { font-size: 1.15rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.m-head span { color: var(--muted); font-size: 0.85rem; }
+.m-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 0 16px; }
+@media (max-width: 720px) { .m-grid { grid-template-columns: 1fr; } }
+.readings h3 small { font: 400 0.75rem var(--f-body); text-transform: none; letter-spacing: 0; color: var(--muted); margin-left: 6px; }
+.octbars { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 4px; height: 150px; align-items: stretch; }
+.octbar { position: relative; display: grid; grid-template-rows: 1fr auto auto; min-width: 0; }
+.octbar .track { position: relative; background: var(--well); border-radius: 3px; }
+.octbar .zero { position: absolute; left: 0; right: 0; top: 50%; border-top: 1px solid var(--muted); opacity: 0.6; }
+.octbar .fill { position: absolute; left: 18%; right: 18%; background: var(--accent); border-radius: 2px; }
+.octbar .fill.neg { background: var(--info); }
+.octbar .val, .octbar .lab { font: 0.68rem var(--f-mono); text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
+.octbar .val { color: var(--ink); padding-top: 3px; }
+.notes { font-size: 0.85rem; color: var(--muted); display: grid; gap: 8px; }
+.notes h2 { font-size: 1rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink); }
+.notes ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.notes a { color: var(--info); }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+#copyText { width: 100%; min-height: 120px; font: 0.8rem var(--f-mono); background: var(--well); color: var(--ink); border: 1px solid var(--line); border-radius: var(--r); padding: 8px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <h1>Audio<span>Check</span></h1>
+      <p>Is this audio file really what it claims to be?</p>
+    </div>
+    <div class="privacy">Analysis runs on your device. The file is never uploaded.</div>
+  </header>
+
+  <div class="drop" id="drop">
+    <div class="msg">
+      <strong>Drop audio files here</strong>
+      <small>One file or many at once. WAV · AIFF · FLAC · MP3 · AAC/M4A · Ogg · Opus. Others show header info only.</small>
+    </div>
+    <span class="btn" id="pick" aria-hidden="true">Choose files</span>
+    <input type="file" id="file" multiple aria-label="Choose audio files">
+  </div>
+
+  <div id="busy" hidden>
+    <div class="status-line"><span id="busyText">Reading file…</span><span id="busyPct">0%</span></div>
+    <div class="progress"><i id="bar"></i></div>
+  </div>
+  <div class="err" id="err" hidden></div>
+
+  <section class="panel batch" id="batch" hidden>
+    <div class="batch-head"><h2>Batch results</h2><span id="batchSummary"></span><button class="ghost" id="copyTable" type="button">Copy table</button></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th class="num">Score</th><th>Status</th><th>File</th><th>Verdict</th><th class="num">kbps</th><th class="num">Cutoff kHz</th><th class="num">LUFS</th><th class="num">LRA</th><th class="num">TP</th><th class="num">PLR</th><th class="num">Clip</th></tr></thead>
+      <tbody id="batchBody"></tbody>
+    </table></div>
+    <p class="hint">Sorted by quality score (best first). Select a row to see its full report below.</p>
+  </section>
+
+  <section class="panel result" id="result" aria-live="polite">
+    <div class="result-head">
+      <div class="fname" id="fname"></div>
+      <span class="example-tag" id="exampleTag">Example result</span>
+    </div>
+    <div class="verdict">
+      <div class="pill" id="pill"></div>
+      <div class="headline" id="headline"></div>
+    </div>
+    <div class="cmp">
+      <div><h3>Claims to be</h3><p id="claimed"></p></div>
+      <div><h3>Really is</h3><p id="real"></p></div>
+    </div>
+    <div class="scorebox" id="scorebox" hidden></div>
+    <ul class="evidence" id="evidence"></ul>
+  </section>
+
+  <section style="display:grid;gap:10px">
+    <div class="section-title"><h2>Spectrum</h2><span id="specNote">Top: spectrogram over time. Bottom: loudest-moments spectrum (98th percentile).</span></div>
+    <div class="scope">
+      <canvas id="specgram" aria-label="Spectrogram"></canvas>
+      <canvas id="curve" aria-label="Frequency spectrum with detected cutoff"></canvas>
+    </div>
+  </section>
+
+  <section class="grid3">
+    <div class="panel readings"><h3>File &amp; header</h3><dl id="dlHeader"></dl></div>
+    <div class="panel readings"><h3>Measured</h3><dl id="dlMeasured"></dl></div>
+    <div class="panel readings"><h3>Levels</h3><dl id="dlLevels"></dl></div>
+  </section>
+
+  <section class="panel mastering" id="masteringPanel">
+    <div class="m-head"><h2>Mastering</h2><span>How the track was mixed and mastered. Not part of the genuine/fake verdict.</span></div>
+    <div class="m-grid">
+      <div class="readings"><dl id="dlMaster"></dl></div>
+      <div class="readings"><h3>Tonal balance <small>dB per octave vs 1 kHz, whole track</small></h3><div class="octbars" id="octBars" role="img" aria-label="Octave balance relative to 1 kHz"></div></div>
+    </div>
+    <ul class="evidence" id="masterNotes"></ul>
+  </section>
+
+  <section class="actions">
+    <button class="ghost" id="copyBtn" type="button">Copy report as text</button>
+    <button class="ghost" id="exampleBtn" type="button" hidden>Show example again</button>
+  </section>
+  <textarea id="copyText" readonly hidden aria-label="Report text"></textarea>
+
+  <section class="notes">
+    <h2>How to read this</h2>
+    <ul>
+      <li><b>Bit depth</b> is checked sample by sample: if the lowest bits are always zero, a "24-bit" file is really 16-bit.</li>
+      <li><b>Cutoff</b> is a sharp wall in the spectrum. Measured with LAME 3.100 at 44.1 kHz: 128 kbps ≈ 17.0 kHz, 192 kbps/V2 ≈ 19.2, 256 kbps ≈ 20.0, 320 kbps ≈ 20.4–20.7. LAME V0, AAC 256 and Vorbis q6 kept full bandwidth. Opus stops at 20 kHz.</li>
+      <li><b>Hi-res</b> (88.2 kHz and up) should have content above 24 kHz. A wall near 22 or 24 kHz means it was upsampled from CD or 48 kHz.</li>
+      <li>On real music (lossy copies of a commercial CD-quality track), MP3 at 128–320 kbps, LAME V0/V2 and Opus sources were all caught; real-music cutoffs ran about 0.3–0.5 kHz lower than on test signals, so the bitrate shown is an estimate. AAC 256 and Vorbis q6 sources were not caught.</li>
+      <li><b>Bitrate</b> is measured from the audio data itself (tags and cover art excluded; every MP3 frame is read). For lossy files it is compared with the cutoff: a 320 kbps MP3 that stops at 17 kHz was upconverted from about 128 kbps. Expected cutoffs were measured on a real track: MP3 128 ≈ 17.0, 160 ≈ 17.8, 192 ≈ 19.2, 256 ≈ 19.9, 320 ≈ 20.6 kHz; ffmpeg AAC 128 ≈ 17.7 and full band from 256; Opus always 20 kHz. Other AAC encoders (Apple, FDK) may differ, so AAC results are marked medium confidence.</li>
+      <li><b>Defective</b> means the length stored in the header (FLAC, WAV, AIFF, MP3 with a Xing/Info header) doesn't match the audio that actually decodes, which happens with truncated or damaged downloads. A file the browser normally plays but can't decode is marked <b>Unreadable</b>.</li>
+      <li><b>Codec frame grid</b> re-analyses the audio with the 2048-sample MDCT that AAC and Vorbis use, at all 1024 frame offsets. Audio decoded from those codecs shows a sharp peak of quantized-away coefficients at one offset; genuine audio scores about 1.0–1.3. In tests on real music it caught ffmpeg AAC 128–320 (scores 5–22) and Vorbis q6–q10 (2.4–3.7) with no false alarms on 13 genuine tracks. It does not detect MP3 (LAME V0 stayed invisible in dense music) and was not tested with Apple or FDK AAC. It takes about 20–60 seconds per file.</li>
+      <li>A low-pass between 19.5 and 20.9 kHz with a gentle slope (wider than 800 Hz from −3 to −30 dB, and less than 32 dB deep) is treated as a likely mastering filter, not proof of a lossy source; lossy encoders measured here cut within 150–620 Hz.</li>
+      <li><b>Spectral holes</b> and <b>band gating</b> are supporting fingerprints of lossy codecs, tuned on test signals rather than on a large music library, so treat them as hints.</li>
+      <li>A 20 kHz wall can also come from mastering. "Genuine" means no evidence against the file was found, not proof that it is clean.</li>
+      <li><b>Quality score</b> (0–100) rates how genuine and clean a file is. Authenticity is 40 points (a real lossless file that matches its label gets all 40). Cleanliness is 40: no clipping runs, true peak (full marks at −1 dBTP or lower, none at +2), no damage or truncation, no DC offset, full bandwidth. Proven 24-bit is 10, awarded only when the quietest part of the track sits at least 10 dB below what 16-bit can represent; a file that is really 24-bit but never gets that quiet is not penalised, it simply can't earn these points. Dynamics (PLR and LRA) is 10. The weights are this tool's own choice, not an industry standard.</li>
+      <li><b>Vinyl check</b> looks for the low-frequency fingerprint of a record: warps move the stylus up and down, a stereo cartridge turns that into an out-of-phase (side) signal, and the tonearm resonance (about 8–15 Hz) boosts it. Digital masters keep content below 20 Hz mono and tiny. "Likely" needs a side-channel hump that is at least as strong as the mid channel there. It was tuned on a small set of files, so treat it as a strong hint, not proof; a rip with a strong subsonic filter can hide it. It does not change the quality score.</li>
+      <li><b>Mastering</b> numbers describe the production, not the file's honesty. PLR is true peak minus integrated loudness and PSR is true peak minus the loudest 3-second moment; low values (under about 9 dB) mean heavy limiting. Tonal balance is the whole-track level of each octave relative to the 1 kHz octave. Streaming checks use Spotify's published guidance: normalisation to −14 LUFS, true peak at or below −1 dBTP, or −2 dBTP for masters louder than −14 LUFS (<a href="https://support.spotify.com/au/artists/article/loudness-normalization/" target="_blank" rel="noopener">Spotify for Artists</a>). LRA follows <a href="https://tech.ebu.ch/docs/tech/tech3342.pdf" target="_blank" rel="noopener">EBU Tech 3342</a>.</li>
+      <li>Loudness follows ITU-R BS.1770 / EBU R128 (integrated LUFS, LRA). True peak uses 4× oversampling. Checked against ffmpeg: loudness within 0.1 LU, true peak within about 0.2 dB for lossless files. For MP3 and other lossy files the browser's own decoder can flatten overs, so true peak may read up to about 1 dB low.</li>
+    </ul>
+    <p>Sources: <a href="https://linux.m2osw.com/mp3-info-tag-specifications-rev0-lame-3100" target="_blank" rel="noopener">LAME info tag layout</a> · <a href="https://ffmpeg.org/pipermail/ffmpeg-devel/2014-May/157952.html" target="_blank" rel="noopener">LAME VBR method codes</a> · <a href="https://hydrogenaud.io/index.php/topic,115897.0.html" target="_blank" rel="noopener">LAME V0 lowpass (Hydrogenaudio)</a>. Cutoff figures are this tool's own measurements.</p>
+  </section>
+</div>
+
+<script>
+/* audiocheck core — browser/Node analysis engine (port of audiocheck.py v1) */
+(function (G) {
+'use strict';
+
+const STD_RATES = [8000, 11025, 16000, 22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000];
+const LOSSY = new Set(['MP3', 'MP2', 'MP1', 'AAC', 'Vorbis', 'Opus', 'AC-3', 'DTS', 'WMA', 'Speex', 'AMR', 'Musepack']);
+
+const EXT_EXPECT = {
+  wav: ['WAV', 'RF64', 'BW64'], wave: ['WAV', 'RF64', 'BW64'], bwf: ['WAV', 'RF64', 'BW64'],
+  aif: ['AIFF', 'AIFC'], aiff: ['AIFF', 'AIFC'], aifc: ['AIFC', 'AIFF'],
+  flac: ['FLAC'], mp3: ['MPEG Layer III'], mp2: ['MPEG Layer II'],
+  m4a: ['MP4/M4A'], mp4: ['MP4/M4A'], m4b: ['MP4/M4A'], alac: ['MP4/M4A'],
+  aac: ['AAC (ADTS)'], ogg: ['Ogg Vorbis', 'Ogg FLAC', 'Ogg Opus', 'Ogg Speex'],
+  oga: ['Ogg Vorbis', 'Ogg FLAC', 'Ogg Opus'], opus: ['Ogg Opus'],
+  ape: ["Monkey's Audio (APE)"], wv: ['WavPack'], tta: ['TTA'],
+  dsf: ['DSF (DSD)'], dff: ['DSDIFF (DSD)'], wma: ['ASF/WMA'], caf: ['CAF'],
+  mpc: ['Musepack'], au: ['Sun AU'], snd: ['Sun AU'], amr: ['AMR'],
+  ac3: ['AC-3'], eac3: ['AC-3'], dts: ['DTS'], webm: ['Matroska/WebM'], mka: ['Matroska/WebM'],
+};
+
+// ------------------------------------------------------------ byte helpers
+const str = (b, o, n) => { let s = ''; for (let i = 0; i < n && o + i < b.length; i++) s += String.fromCharCode(b[o + i]); return s; };
+const u16be = (b, o) => (b[o] << 8) | b[o + 1];
+const u32be = (b, o) => ((b[o] << 24) >>> 0) + (b[o + 1] << 16) + (b[o + 2] << 8) + b[o + 3];
+const u16le = (b, o) => b[o] | (b[o + 1] << 8);
+const u32le = (b, o) => (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16)) + ((b[o + 3] << 24) >>> 0);
+const ext80 = (b, o) => { // IEEE 754 80-bit extended (AIFF sample rate)
+  const exp = ((b[o] & 0x7f) << 8) | b[o + 1];
+  let mant = 0; for (let i = 0; i < 8; i++) mant = mant * 256 + b[o + 2 + i];
+  return mant * Math.pow(2, exp - 16383 - 63);
+};
+
+// --------------------------------------------------------------- signature
+function detectSignature(bytes) {
+  const notes = [];
+  let off = 0;
+  if (str(bytes, 0, 3) === 'ID3' && bytes.length > 10) {
+    const size = ((bytes[6] << 21) | (bytes[7] << 14) | (bytes[8] << 7) | bytes[9]) + 10 + (bytes[5] & 0x10 ? 10 : 0);
+    notes.push(`ID3v2 tag (${size} bytes) at start`);
+    off = size;
+  }
+  const h = bytes.subarray(off, off + 65536);
+  const s4 = str(h, 0, 4);
+  let kind = null;
+  if (s4 === 'RIFF' && str(h, 8, 4) === 'WAVE') kind = 'WAV';
+  else if ((s4 === 'RF64' || s4 === 'BW64') && str(h, 8, 4) === 'WAVE') kind = s4;
+  else if (s4 === 'FORM' && (str(h, 8, 4) === 'AIFF' || str(h, 8, 4) === 'AIFC')) kind = str(h, 8, 4);
+  else if (s4 === 'fLaC') kind = 'FLAC';
+  else if (s4 === 'OggS') {
+    const seg = h[26] || 0, p = 27 + seg;
+    if (h[p] === 1 && str(h, p + 1, 6) === 'vorbis') kind = 'Ogg Vorbis';
+    else if (str(h, p, 8) === 'OpusHead') kind = 'Ogg Opus';
+    else if (h[p] === 0x7f && str(h, p + 1, 4) === 'FLAC') kind = 'Ogg FLAC';
+    else if (str(h, p, 5) === 'Speex') kind = 'Ogg Speex';
+    else kind = 'Ogg (unknown codec)';
+  }
+  else if (str(h, 4, 4) === 'ftyp') { kind = 'MP4/M4A'; notes.push('MP4 brand: ' + str(h, 8, 4).trim()); }
+  else if (s4 === 'MAC ') kind = "Monkey's Audio (APE)";
+  else if (s4 === 'wvpk') kind = 'WavPack';
+  else if (s4 === 'TTA1') kind = 'TTA';
+  else if (s4 === 'DSD ') kind = 'DSF (DSD)';
+  else if (s4 === 'FRM8') kind = 'DSDIFF (DSD)';
+  else if (s4 === 'caff') kind = 'CAF';
+  else if (h[0] === 0x30 && h[1] === 0x26 && h[2] === 0xB2 && h[3] === 0x75) kind = 'ASF/WMA';
+  else if (s4 === 'MPCK' || str(h, 0, 3) === 'MP+') kind = 'Musepack';
+  else if (s4 === '.snd') kind = 'Sun AU';
+  else if (str(h, 0, 5) === '#!AMR') kind = 'AMR';
+  else if (h[0] === 0x1a && h[1] === 0x45 && h[2] === 0xdf && h[3] === 0xa3) kind = 'Matroska/WebM';
+  else if (h[0] === 0x0b && h[1] === 0x77) kind = 'AC-3';
+  else if (h[0] === 0x7f && h[1] === 0xfe && h[2] === 0x80 && h[3] === 0x01) kind = 'DTS';
+  else if (s4 === 'MThd') kind = 'MIDI (not audio data)';
+  let mpegAt = -1;
+  if (!kind) {
+    for (let i = 0; i < h.length - 4; i++) {
+      if (h[i] === 0xff && (h[i + 1] & 0xe0) === 0xe0) {
+        const layer = (h[i + 1] >> 1) & 3;
+        if ((h[i + 1] & 0xf6) === 0xf0) kind = 'AAC (ADTS)';
+        else if (layer >= 1) {
+          const br = h[i + 2] >> 4, sr = (h[i + 2] >> 2) & 3;
+          if (br === 0 || br === 15 || sr === 3) continue;
+          kind = { 1: 'MPEG Layer III', 2: 'MPEG Layer II', 3: 'MPEG Layer I' }[layer];
+        } else continue;
+        mpegAt = off + i;
+        if (mpegAt) notes.push(`audio frames start at byte ${mpegAt}`);
+        break;
+      }
+    }
+  }
+  return { kind: kind || 'Unknown', notes, mpegAt };
+}
+
+// ------------------------------------------------------------ header parse
+const MP3_BR = {
+  '1-3': [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320],
+  '1-2': [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384],
+  '1-1': [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448],
+  '2-3': [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
+  '2-2': [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
+  '2-1': [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256],
+};
+const MP3_SR = { 3: [44100, 48000, 32000], 2: [22050, 24000, 16000], 0: [11025, 12000, 8000] };
+const LAME_VBR = { 0: 'unknown', 1: 'CBR', 2: 'ABR', 3: 'VBR (rh)', 4: 'VBR (mtrh)', 5: 'VBR (mt)', 6: 'VBR', 8: 'CBR 2-pass', 9: 'ABR 2-pass' };
+
+function parseHeader(bytes, sig) {
+  const H = { codec: null, lossless: null, sampleRate: null, channels: null, bits: null, float: false, bitrateKbps: null, encoder: null, extra: {} };
+  const k = sig.kind;
+  try {
+    if (k === 'WAV' || k === 'RF64' || k === 'BW64') {
+      let p = 12;
+      while (p + 8 <= bytes.length) {
+        const id = str(bytes, p, 4); let sz = u32le(bytes, p + 4);
+        if (id === 'fmt ') {
+          let tag = u16le(bytes, p + 8);
+          H.channels = u16le(bytes, p + 10); H.sampleRate = u32le(bytes, p + 12);
+          H.bits = u16le(bytes, p + 22);
+          if (tag === 0xfffe && sz >= 40) { H.extra.validBits = u16le(bytes, p + 26); tag = u16le(bytes, p + 32); }
+          H.extra.formatTag = '0x' + tag.toString(16).padStart(4, '0');
+          if (tag === 1) { H.codec = 'PCM'; H.lossless = true; }
+          else if (tag === 3) { H.codec = 'PCM float'; H.lossless = true; H.float = true; }
+          else if (tag === 0x55) { H.codec = 'MP3'; H.lossless = false; H.bits = null; }
+          else if (tag === 0x50) { H.codec = 'MP2'; H.lossless = false; H.bits = null; }
+          else if (tag === 0xff || tag === 0x1610) { H.codec = 'AAC'; H.lossless = false; H.bits = null; }
+          else if (tag === 0x2000) { H.codec = 'AC-3'; H.lossless = false; H.bits = null; }
+          else if (tag === 6 || tag === 7) { H.codec = tag === 6 ? 'A-law' : 'µ-law'; H.lossless = false; }
+          else if (tag === 2 || tag === 0x11) { H.codec = 'ADPCM'; H.lossless = false; }
+          else { H.codec = 'format ' + H.extra.formatTag; }
+          if (H.lossless === false && H.codec !== 'A-law' && H.codec !== 'µ-law' && H.codec !== 'ADPCM') H.bitrateKbps = Math.round(u32le(bytes, p + 16) * 8 / 1000);
+          H.extra.blockAlign = u16le(bytes, p + 20);
+        } else if (id === 'data') {
+          if (H.lossless && H.extra.blockAlign && H.sampleRate && sz !== 0xffffffff) H.extra.headerDurationSec = sz / H.extra.blockAlign / H.sampleRate;
+          break;
+        }
+        if (sz === 0xffffffff) sz = 0;
+        p += 8 + sz + (sz & 1);
+      }
+    } else if (k === 'AIFF' || k === 'AIFC') {
+      let p = 12;
+      while (p + 8 <= bytes.length) {
+        const id = str(bytes, p, 4), sz = u32be(bytes, p + 4);
+        if (id === 'COMM') {
+          H.channels = u16be(bytes, p + 8); H.bits = u16be(bytes, p + 14);
+          H.sampleRate = Math.round(ext80(bytes, p + 16));
+          const nf = u32be(bytes, p + 10); if (nf && H.sampleRate) H.extra.headerDurationSec = nf / ext80(bytes, p + 16);
+          H.codec = 'PCM'; H.lossless = true;
+          if (k === 'AIFC') {
+            const ct = str(bytes, p + 26, 4);
+            H.extra.compression = ct;
+            if (ct === 'fl32' || ct === 'FL32' || ct === 'fl64') { H.codec = 'PCM float'; H.float = true; }
+            else if (ct !== 'NONE' && ct !== 'sowt' && ct !== 'twos') { H.codec = 'AIFC ' + ct; H.lossless = false; }
+          }
+          break;
+        }
+        p += 8 + sz + (sz & 1);
+      }
+    } else if (k === 'FLAC' || k === 'Ogg FLAC') {
+      // native: 'fLaC' + 4-byte block header; Ogg: 0x7F 'FLAC' ver(2) count(2) 'fLaC' blockhdr(4)
+      const b = k === 'FLAC' ? 8 : (27 + bytes[26]) + 17;
+      H.sampleRate = (bytes[b + 10] << 12) | (bytes[b + 11] << 4) | (bytes[b + 12] >> 4);
+      H.channels = ((bytes[b + 12] >> 1) & 7) + 1;
+      H.bits = (((bytes[b + 12] & 1) << 4) | (bytes[b + 13] >> 4)) + 1;
+      const total = (bytes[b + 13] & 15) * 2 ** 32 + u32be(bytes, b + 14);
+      if (total && H.sampleRate) { H.extra.durationSec = total / H.sampleRate; H.extra.headerDurationSec = H.extra.durationSec; H.extra.headerSource = 'FLAC STREAMINFO'; }
+      H.codec = 'FLAC'; H.lossless = true;
+      if (k === 'FLAC') { // walk metadata blocks for vendor string
+        let q = 4;
+        for (let n = 0; n < 64 && q + 4 < bytes.length; n++) {
+          const last = bytes[q] & 0x80, type = bytes[q] & 0x7f, len = (bytes[q + 1] << 16) | (bytes[q + 2] << 8) | bytes[q + 3];
+          if (type === 4) { const vl = u32le(bytes, q + 4); H.encoder = str(bytes, q + 8, Math.min(vl, 80)); }
+          q += 4 + len; if (last) break;
+        }
+      }
+    } else if (k === 'MPEG Layer III' || k === 'MPEG Layer II' || k === 'MPEG Layer I') {
+      const i = sig.mpegAt >= 0 ? sig.mpegAt : 0;
+      const ver = (bytes[i + 1] >> 3) & 3, layer = (bytes[i + 1] >> 1) & 3;
+      const lnum = { 1: 3, 2: 2, 3: 1 }[layer];
+      const vkey = ver === 3 ? 1 : 2;
+      H.codec = { 3: 'MP3', 2: 'MP2', 1: 'MP1' }[lnum]; H.lossless = false;
+      H.bitrateKbps = MP3_BR[vkey + '-' + lnum][bytes[i + 2] >> 4];
+      H.sampleRate = (MP3_SR[ver] || [])[(bytes[i + 2] >> 2) & 3] || null;
+      H.channels = ((bytes[i + 3] >> 6) === 3) ? 1 : 2;
+      H.extra.channelMode = ['Stereo', 'Joint stereo', 'Dual channel', 'Mono'][bytes[i + 3] >> 6];
+      // Xing / Info / LAME
+      const win = bytes.subarray(i, i + 200);
+      for (const m of ['Xing', 'Info']) {
+        let p = -1;
+        for (let j = 0; j < win.length - 4; j++) if (str(win, j, 4) === m) { p = j; break; }
+        if (p < 0) continue;
+        H.extra.xing = m === 'Info' ? 'Info (CBR file)' : 'Xing (VBR file)';
+        const flags = u32be(win, p + 4); let q = p + 8;
+        if (flags & 1) { H.extra.frames = u32be(win, q); q += 4; }
+        if (flags & 2) q += 4; if (flags & 4) q += 100; if (flags & 8) q += 4;
+        const enc = str(win, q, 9).replace(/\0/g, '').trim();
+        if (/^(LAME|Lavc|Lavf|GOGO|L3\.99)/.test(enc)) {
+          H.encoder = enc;
+          if (enc.startsWith('LAME')) {
+            H.extra.lameVbrMethod = LAME_VBR[win[q + 9] & 15] || ('code ' + (win[q + 9] & 15));
+            if (win[q + 10]) H.extra.lameLowpassHz = win[q + 10] * 100;
+          }
+        }
+        if (H.extra.frames && H.sampleRate) {
+          const spf = lnum === 1 ? 384 : (lnum === 3 && vkey === 2 ? 576 : 1152);
+          H.extra.durationSec = H.extra.frames * spf / H.sampleRate;
+          H.extra.headerDurationSec = H.extra.durationSec; H.extra.headerSource = 'Xing frame count';
+        }
+        break;
+      }
+    } else if (k === 'AAC (ADTS)') {
+      const ADTS_SR = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
+      const i = sig.mpegAt >= 0 ? sig.mpegAt : 0;
+      H.codec = 'AAC'; H.lossless = false;
+      H.sampleRate = ADTS_SR[(bytes[i + 2] >> 2) & 15];
+      H.channels = ((bytes[i + 2] & 1) << 2) | (bytes[i + 3] >> 6);
+      H.extra.profile = ['Main', 'LC', 'SSR', 'LTP'][bytes[i + 2] >> 6];
+    } else if (k === 'Ogg Vorbis') {
+      const p = 28 + bytes[26];
+      H.codec = 'Vorbis'; H.lossless = false;
+      H.channels = bytes[p + 10]; H.sampleRate = u32le(bytes, p + 11);
+      const nom = u32le(bytes, p + 19); if (nom && nom < 2e6) H.bitrateKbps = Math.round(nom / 1000);
+    } else if (k === 'Ogg Opus') {
+      const p = 27 + bytes[26];
+      H.codec = 'Opus'; H.lossless = false;
+      H.channels = bytes[p + 9]; H.sampleRate = 48000; H.extra.inputSampleRate = u32le(bytes, p + 12);
+    } else if (k === 'MP4/M4A') {
+      // find sample entry inside stsd
+      let at = -1;
+      for (let j = 0; j < bytes.length - 8; j++) {
+        if (bytes[j] === 0x73 && str(bytes, j, 4) === 'stsd') { at = j; break; }
+      }
+      if (at > 0) {
+        const e = at + 12; // stsd: 'stsd' + ver/flags(4) + count(4) -> first entry size(4)
+        const typ = str(bytes, e + 4, 4);
+        H.extra.sampleEntry = typ;
+        const map = { mp4a: 'AAC', alac: 'ALAC', 'ac-3': 'AC-3', 'ec-3': 'E-AC-3', Opus: 'Opus', fLaC: 'FLAC', '.mp3': 'MP3', lpcm: 'PCM', sowt: 'PCM', twos: 'PCM' };
+        H.codec = map[typ] || typ;
+        H.lossless = ['ALAC', 'FLAC', 'PCM'].includes(H.codec) ? true : (H.codec in { AAC: 1, 'AC-3': 1, 'E-AC-3': 1, Opus: 1, MP3: 1 } ? false : null);
+        H.channels = u16be(bytes, e + 8 + 16); H.bits = u16be(bytes, e + 8 + 18);
+        H.sampleRate = u32be(bytes, e + 8 + 24) >>> 16;
+        if (H.codec === 'ALAC') { // ALACSpecificConfig after inner 'alac' box + ver/flags
+          let j = e + 36; for (; j < e + 120; j++) if (str(bytes, j, 4) === 'alac') break;
+          const c = j + 8; H.bits = bytes[c + 5]; const sr = u32be(bytes, c + 20); if (sr) H.sampleRate = sr;
+        }
+        if (!H.lossless) H.bits = null;
+      }
+    } else if (k === 'CAF') {
+      let p = 8;
+      while (p + 12 <= bytes.length) {
+        const id = str(bytes, p, 4), sz = u32be(bytes, p + 4) * 2 ** 32 + u32be(bytes, p + 8);
+        if (id === 'desc') {
+          const dv = new DataView(bytes.buffer, bytes.byteOffset + p + 12, 32);
+          H.sampleRate = Math.round(dv.getFloat64(0)); const fmt = str(bytes, p + 20, 4); const flags = dv.getUint32(12);
+          H.channels = dv.getUint32(24); H.bits = dv.getUint32(28) || null;
+          const map = { lpcm: 'PCM', alac: 'ALAC', 'aac ': 'AAC', '.mp3': 'MP3', ulaw: 'µ-law', alaw: 'A-law', opus: 'Opus', flac: 'FLAC' };
+          H.codec = map[fmt] || fmt; H.lossless = ['PCM', 'ALAC', 'FLAC'].includes(H.codec);
+          if (H.codec === 'PCM' && (flags & 1)) { H.codec = 'PCM float'; H.float = true; }
+          if (!H.lossless) H.bits = null;
+          break;
+        }
+        p += 12 + sz;
+      }
+    } else if (k === 'ASF/WMA') { H.codec = 'WMA'; H.lossless = false; }
+    else if (k === 'AC-3') { H.codec = 'AC-3'; H.lossless = false; }
+    else if (k === 'DTS') { H.codec = 'DTS'; H.lossless = false; }
+    else if (k === 'WavPack') { H.codec = 'WavPack'; H.lossless = true; }
+    else if (k === "Monkey's Audio (APE)") { H.codec = 'APE'; H.lossless = true; }
+    else if (k === 'TTA') { H.codec = 'TTA'; H.lossless = true; H.channels = u16le(bytes, 6); H.bits = u16le(bytes, 8); H.sampleRate = u32le(bytes, 10); }
+    else if (k === 'DSF (DSD)') { H.codec = 'DSD'; H.lossless = true; H.channels = u32le(bytes, 52); H.sampleRate = u32le(bytes, 56); H.bits = 1; }
+    else if (k === 'Musepack') { H.codec = 'Musepack'; H.lossless = false; }
+  } catch (e) { H.extra.parseError = String(e); }
+  return H;
+}
+
+// ----------------------------------------------------------- bitrate check
+function mp3FrameScan(bytes) {
+  let i = 0;
+  if (str(bytes, 0, 3) === 'ID3') i = ((bytes[6] << 21) | (bytes[7] << 14) | (bytes[8] << 7) | bytes[9]) + 10 + (bytes[5] & 0x10 ? 10 : 0);
+  const end = bytes.length - (str(bytes, bytes.length - 128, 3) === 'TAG' ? 128 : 0);
+  const rates = new Map(); let nbytes = 0, frames = 0, first = true, spf = 1152, sr = 44100, firstKbps = null;
+  while (i + 4 <= end) {
+    const b1 = bytes[i + 1], b2 = bytes[i + 2];
+    if (bytes[i] !== 0xff || (b1 & 0xe0) !== 0xe0) { i++; continue; }
+    const ver = (b1 >> 3) & 3, layer = (b1 >> 1) & 3, bri = b2 >> 4, sri = (b2 >> 2) & 3, pad = (b2 >> 1) & 1;
+    if (ver === 1 || layer === 0 || bri === 0 || bri === 15 || sri === 3) { i++; continue; }
+    const lnum = { 1: 3, 2: 2, 3: 1 }[layer], vkey = ver === 3 ? 1 : 2;
+    const br = MP3_BR[vkey + '-' + lnum][bri] * 1000, fsr = MP3_SR[ver][sri];
+    let flen;
+    if (lnum === 1) { flen = (Math.floor(12 * br / fsr) + pad) * 4; spf = 384; }
+    else if (lnum === 3 && vkey === 2) { flen = Math.floor(72 * br / fsr) + pad; spf = 576; }
+    else { flen = Math.floor(144 * br / fsr) + pad; spf = 1152; }
+    if (flen < 4) { i++; continue; }
+    if (first) { first = false; const w = str(bytes, i, 200); if (w.includes('Xing') || w.includes('Info')) { i += flen; continue; } }
+    const k = br / 1000; rates.set(k, (rates.get(k) || 0) + 1); if (firstKbps == null) firstKbps = k;
+    nbytes += flen; frames++; sr = fsr; i += flen;
+  }
+  if (!frames) return null;
+  const u = [...rates.keys()].sort((a, b) => a - b), dur = frames * spf / sr;
+  return { frames, audioBytes: nbytes, durationS: dur, avgKbps: nbytes * 8 / dur / 1000, minKbps: u[0], maxKbps: u[u.length - 1], mode: u.length === 1 ? 'CBR' : 'VBR', firstKbps };
+}
+function audioPayloadBytes(bytes, sig) {
+  const size = bytes.length;
+  try {
+    if (sig === 'WAV' || sig === 'AIFF' || sig === 'AIFC') {
+      const le = sig === 'WAV', want = le ? 'data' : 'SSND'; let p = 12;
+      while (p + 8 <= size) { const id = str(bytes, p, 4), sz = le ? u32le(bytes, p + 4) : u32be(bytes, p + 4); if (id === want) return [sz - (le ? 0 : 8), 'data chunk']; p += 8 + sz + (sz & 1); }
+    }
+    if (sig === 'FLAC') {
+      let p = 4, meta = 0, pics = 0;
+      for (let n = 0; n < 256 && p + 4 <= size; n++) { const last = bytes[p] & 0x80, typ = bytes[p] & 0x7f, ln = (bytes[p + 1] << 16) | (bytes[p + 2] << 8) | bytes[p + 3]; meta += 4 + ln; if (typ === 6) pics += ln; p += 4 + ln; if (last) break; }
+      return [size - 4 - meta, 'file minus metadata' + (pics > 1e5 ? ` (incl. ${(pics / 1e6).toFixed(1)} MB cover art)` : '')];
+    }
+    if (sig === 'MP4/M4A') {
+      let p = 0, tot = 0;
+      while (p + 8 <= size) { let sz = u32be(bytes, p), hl = 8; const typ = str(bytes, p + 4, 4); if (sz === 1) { sz = u32be(bytes, p + 8) * 2 ** 32 + u32be(bytes, p + 12); hl = 16; } else if (sz === 0) sz = size - p; if (sz < 8) break; if (typ === 'mdat') tot += sz - hl; p += sz; }
+      if (tot) return [tot, 'mdat box'];
+    }
+  } catch (e) {}
+  return [size, 'whole file (may include tags/cover art)'];
+}
+// Cutoff (kHz) each encoder keeps at a bitrate, measured with LAME 3.100 / ffmpeg 6.1 on a real CD-quality track. null = full band.
+const EXPECTED_CUTOFF = {
+  MP3: [[96, 15.6], [128, 17.0], [160, 17.8], [192, 19.2], [256, 19.9], [320, 20.6]],
+  AAC: [[96, 17.0], [128, 17.7], [160, 19.9], [192, 19.9], [256, null]],
+  Vorbis: [[96, 17.0], [128, 19.9], [192, null]],
+};
+function impliedBitrate(codec, fk) { const t = EXPECTED_CUTOFF[codec]; if (!t || fk == null) return null; let best = null; for (const [br, c] of t) if (c != null && c <= fk + 0.35) best = br; return best || t[0][0]; }
+function bitrateCheck(R, bytes, H, decodedS) {
+  const out = { findings: [] };
+  let [payload, src] = audioPayloadBytes(bytes, R.signature);
+  const scan = ['MP3', 'MP2', 'MP1'].includes(H.codec) ? mp3FrameScan(bytes) : null;
+  if (scan) {
+    payload = scan.audioBytes; src = 'sum of MP3 frames';
+    Object.assign(out, { mode: scan.mode, minKbps: scan.minKbps, maxKbps: scan.maxKbps, frames: scan.frames });
+    const x = H.extra.xing || '';
+    if (x.startsWith('Info') && scan.mode === 'VBR') out.findings.push({ t: 'warn', s: `The header says CBR (Info tag), but frame bitrates vary from ${scan.minKbps} to ${scan.maxKbps} kbps.` });
+    if (x.startsWith('Xing') && scan.mode === 'CBR') out.findings.push({ t: 'info', s: 'The header says VBR (Xing tag), but every frame has the same bitrate.' });
+  }
+  const dur = decodedS || (scan && scan.durationS), meas = dur ? payload * 8 / dur / 1000 : null;
+  out.measuredKbps = meas ? Math.round(meas) : null; out.payloadSource = src; out.declaredKbps = H.bitrateKbps || null;
+  if (H.lossless && H.bits && H.sampleRate && H.channels) { out.pcmKbps = Math.round(H.sampleRate * H.channels * H.bits / 1000); if (meas) out.pctOfPcm = Math.round(meas / out.pcmKbps * 100); }
+  const fc = R.spectral && R.spectral.cutoffHz, fk = fc ? fc / 1000 : null;
+  if (H.lossless === false && meas) {
+    if (EXPECTED_CUTOFF[H.codec] && fk) {
+      const imp = impliedBitrate(H.codec, fk); out.cutoffImpliesKbps = imp;
+      if (imp && meas > imp * 1.35) {
+        out.inflated = { realKbps: imp, confidence: H.codec === 'MP3' ? 'high' : 'medium' };
+        out.findings.push({ t: 'bad', s: `The bitrate is about ${Math.round(meas)} kbps, but a ${fk.toFixed(1)} kHz cutoff is what this encoder keeps at about ${imp} kbps. The file was upconverted from a lower-bitrate source; its real quality is about ${imp} kbps.` });
+      }
+    }
+    if (H.codec === 'Opus' && fk && fk < 19.5) { out.inflated = { realKbps: null, confidence: 'medium' }; out.findings.push({ t: 'bad', s: `Opus keeps 20 kHz at any bitrate, but this file stops at ${fk.toFixed(1)} kHz. The source was already band-limited, most likely another lossy file.` }); }
+    if (out.declaredKbps && Math.abs(out.declaredKbps - meas) / meas > 0.15 && out.mode !== 'VBR') out.findings.push({ t: 'warn', s: `The header declares ${out.declaredKbps} kbps, but the audio data averages ${Math.round(meas)} kbps.` });
+  }
+  return out;
+}
+
+// --------------------------------------------------------------------- FFT
+const fftCache = new Map();
+function pow2Plan(n) {
+  let p = fftCache.get(n); if (p) return p;
+  const rev = new Uint32Array(n); let bits = Math.log2(n) | 0;
+  for (let i = 0; i < n; i++) { let r = 0, x = i; for (let b = 0; b < bits; b++) { r = (r << 1) | (x & 1); x >>= 1; } rev[i] = r; }
+  const cos = new Float64Array(n / 2), sin = new Float64Array(n / 2);
+  for (let i = 0; i < n / 2; i++) { cos[i] = Math.cos(2 * Math.PI * i / n); sin[i] = -Math.sin(2 * Math.PI * i / n); }
+  p = { rev, cos, sin }; fftCache.set(n, p); return p;
+}
+function fftPow2(re, im) { // in place
+  const n = re.length, { rev, cos, sin } = pow2Plan(n);
+  for (let i = 0; i < n; i++) { const j = rev[i]; if (j > i) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; } }
+  for (let size = 2; size <= n; size <<= 1) {
+    const half = size >> 1, step = n / size;
+    for (let s = 0; s < n; s += size) {
+      for (let k = 0; k < half; k++) {
+        const wr = cos[k * step], wi = sin[k * step];
+        const a = s + k, b = a + half;
+        const tr = re[b] * wr - im[b] * wi, ti = re[b] * wi + im[b] * wr;
+        re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+      }
+    }
+  }
+}
+// N = 9 * 2^m  (Cooley-Tukey: N1 = 9 direct DFT, N2 = 2^m FFT)
+const mixCache = new Map();
+function fft9x(re, im) {
+  const N = re.length, N1 = 9, N2 = N / 9;
+  let P = mixCache.get(N);
+  if (!P) {
+    const tw_r = new Float64Array(N1 * N2), tw_i = new Float64Array(N1 * N2);
+    for (let n1 = 0; n1 < N1; n1++) for (let k2 = 0; k2 < N2; k2++) { const a = -2 * Math.PI * n1 * k2 / N; tw_r[n1 * N2 + k2] = Math.cos(a); tw_i[n1 * N2 + k2] = Math.sin(a); }
+    const d_r = new Float64Array(81), d_i = new Float64Array(81);
+    for (let a = 0; a < 9; a++) for (let b = 0; b < 9; b++) { const t = -2 * Math.PI * a * b / 9; d_r[a * 9 + b] = Math.cos(t); d_i[a * 9 + b] = Math.sin(t); }
+    P = { tw_r, tw_i, d_r, d_i, yr: new Float64Array(N), yi: new Float64Array(N), tr: new Float64Array(N2), ti: new Float64Array(N2) };
+    mixCache.set(N, P);
+  }
+  const { tw_r, tw_i, d_r, d_i, yr, yi, tr, ti } = P;
+  for (let n1 = 0; n1 < N1; n1++) {
+    for (let n2 = 0; n2 < N2; n2++) { tr[n2] = re[N1 * n2 + n1]; ti[n2] = im[N1 * n2 + n1]; }
+    fftPow2(tr, ti);
+    for (let k2 = 0; k2 < N2; k2++) {
+      const wr = tw_r[n1 * N2 + k2], wi = tw_i[n1 * N2 + k2];
+      yr[n1 * N2 + k2] = tr[k2] * wr - ti[k2] * wi; yi[n1 * N2 + k2] = tr[k2] * wi + ti[k2] * wr;
+    }
+  }
+  for (let k2 = 0; k2 < N2; k2++) {
+    for (let k1 = 0; k1 < N1; k1++) {
+      let sr = 0, si = 0;
+      for (let n1 = 0; n1 < N1; n1++) { const c = d_r[n1 * 9 + k1], s = d_i[n1 * 9 + k1], a = yr[n1 * N2 + k2], b = yi[n1 * N2 + k2]; sr += a * c - b * s; si += a * s + b * c; }
+      re[k2 + N2 * k1] = sr; im[k2 + N2 * k1] = si;
+    }
+  }
+}
+function hann(N) { const w = new Float64Array(N); for (let i = 0; i < N; i++) w[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1)); return w; }
+
+// ---------------------------------------------------------------- helpers
+function percentileSorted(a, q) { const n = a.length; if (!n) return NaN; const idx = q / 100 * (n - 1), lo = Math.floor(idx), hi = Math.ceil(idx); return a[lo] + (a[hi] - a[lo]) * (idx - lo); }
+function percentile(arr, q) { const a = Float64Array.from(arr).sort(); return percentileSorted(a, q); }
+function median(arr) { return percentile(arr, 50); }
+function medianFilter(v, k) {
+  const n = v.length, h = k >> 1, out = new Float64Array(n), win = new Float64Array(k);
+  for (let i = 0; i < n; i++) {
+    for (let j = -h; j <= h; j++) { const idx = Math.min(n - 1, Math.max(0, i + j)); win[j + h] = v[idx]; }
+    win.sort(); out[i] = win[h];
+  }
+  return out;
+}
+const fftSize = sr => 2 ** Math.round(Math.log2(sr / 11));
+function theoreticalFloorDb(bits, N) { const w = hann(N); let s1 = 0, s2 = 0; for (const x of w) { s1 += x; s2 += x * x; } const q = 2 ** -(bits - 1); return 10 * Math.log10(q * q / 12 * s2 / (s1 / 2) ** 2); }
+const tick = () => new Promise(r => setTimeout(r, 0));
+
+// ---------------------------------------------------------- core analysis
+async function analyzeSamples(chs, sr, opts = {}) {
+  const progress = opts.progress || (() => {});
+  const C = chs.length, L = chs[0].length;
+  const N = fftSize(sr), bins = N / 2 + 1, w = hann(N);
+  let s1 = 0; for (const x of w) s1 += x; const norm = (s1 / 2) ** 2;
+  const totalFrames = Math.floor(L / N);
+  const maxStore = Math.floor(Math.max(400, Math.min(1500, 8e6 / bins)));
+  const stride = Math.max(1, Math.floor(totalFrames / maxStore));
+  const st = { peak: new Float64Array(C), sumsq: new Float64Array(C), sum: new Float64Array(C), clip: new Int32Array(C), cliprun: new Int32Array(C), lr: 0, ll: 0, rr: 0, maxdiff: 0, maxsum: 0, over1: 0, grid: { 8: true, 16: true, 20: true, 24: true }, n: L };
+  // sample-level pass
+  for (let c = 0; c < C; c++) {
+    const x = chs[c]; let pk = 0, ss = 0, sm = 0, cl = 0, run = 0, runs = 0;
+    const g = st.grid;
+    for (let i = 0; i < L; i++) {
+      const v = x[i], a = Math.abs(v);
+      if (a > pk) pk = a; ss += v * v; sm += v;
+      if (a >= 0.9999) { cl++; run++; } else { if (run >= 3) runs++; run = 0; }
+      if (a > 1) st.over1++;
+    }
+    if (run >= 3) runs++;
+    // Integer-grid test. Decoders scale ints to float as v/2^(k-1), and some (Chrome's FLAC path)
+    // use v/(2^(k-1)-1) for positive samples, which float32 then rounds; allow that rounding only.
+    for (const k of [8, 16, 20, 24]) {
+      if (!g[k]) continue; const m = 2 ** (k - 1), m1 = m - 1;
+      for (let i = 0; i < L; i++) {
+        const v = x[i], y = v * m; if (y === Math.floor(y)) continue;
+        const y2 = v * m1; if (Math.abs(y2 - Math.round(y2)) <= Math.abs(y2) * 1.2e-7 + 1e-9) continue;
+        g[k] = false; break;
+      }
+    }
+    st.peak[c] = pk; st.sumsq[c] = ss; st.sum[c] = sm; st.clip[c] = cl; st.cliprun[c] = runs;
+  }
+  if (C >= 2) {
+    const a = chs[0], b = chs[1]; let lr = 0, ll = 0, rr = 0, md = 0, ms = 0;
+    let m2 = 0, s2 = 0;
+    for (let i = 0; i < L; i++) { const x = a[i], y = b[i]; lr += x * y; ll += x * x; rr += y * y; const d = Math.abs(x - y), s = Math.abs(x + y); if (d > md) md = d; if (s > ms) ms = s; m2 += (x + y) * (x + y) / 4; s2 += (x - y) * (x - y) / 4; }
+    Object.assign(st, { lr, ll, rr, maxdiff: md, maxsum: ms, mid2: m2, side2: s2 });
+  }
+  progress(0.15);
+  // spectral frames
+  const spectra = [], times = [];
+  const re = new Float64Array(N), im = new Float64Array(N), pw = new Float64Array(bins), meanPow = new Float64Array(bins); let meanN = 0;
+  for (let f = 0; f < totalFrames; f += stride) {
+    const o = f * N;
+    let e = 0; for (let c = 0; c < C; c++) for (let i = 0; i < N; i++) { const v = chs[c][o + i]; e += v * v; }
+    const rms = Math.sqrt(e / (N * C) + 1e-30);
+    if (rms <= 10 ** (-60 / 20)) continue;
+    pw.fill(0);
+    for (let c = 0; c < C; c++) {
+      for (let i = 0; i < N; i++) { re[i] = chs[c][o + i] * w[i]; im[i] = 0; }
+      fftPow2(re, im);
+      for (let k = 0; k < bins; k++) pw[k] += (re[k] * re[k] + im[k] * im[k]) / norm / C;
+    }
+    for (let k = 0; k < bins; k++) meanPow[k] += pw[k]; meanN++;
+    const db = new Float32Array(bins); for (let k = 0; k < bins; k++) db[k] = 10 * Math.log10(pw[k] + 1e-30);
+    spectra.push(db); times.push(o / sr);
+    if (spectra.length % 40 === 0) { progress(0.15 + 0.35 * f / totalFrames); await tick(); }
+  }
+  // short-frame fingerprint
+  const Ns = 1152 * Math.max(1, Math.round(sr / 44100));
+  const ws = hann(Ns), dfS = sr / Ns;
+  const iLo0 = Math.floor(8000 / dfS) + 1, iLo1 = Math.ceil(14000 / dfS) - 1;
+  const iHi0 = Math.floor(16500 / dfS) + 1, iHi1 = Math.ceil(19500 / dfS) - 1;
+  const iH0 = Math.floor(11000 / dfS) + 1, iH1 = Math.ceil(16000 / dfS) - 1;
+  const short = { lo: [], hi: [], holes: [] };
+  if (sr >= 32000) {
+    const sre = new Float64Array(Ns), sim = new Float64Array(Ns), band = new Float64Array(iH1 - iH0 + 1);
+    const nS = Math.floor(L / Ns);
+    for (let f = 0; f < nS; f++) {
+      const o = f * Ns;
+      for (let i = 0; i < Ns; i++) { let m = 0; for (let c = 0; c < C; c++) m += chs[c][o + i]; sre[i] = m / C * ws[i]; sim[i] = 0; }
+      fft9x(sre, sim);
+      const P = k => sre[k] * sre[k] + sim[k] * sim[k] + 1e-30;
+      let lo = 0; for (let k = iLo0; k <= iLo1; k++) lo += P(k); lo /= (iLo1 - iLo0 + 1);
+      let hi = 0; if (iHi1 < Ns / 2) { for (let k = iHi0; k <= iHi1; k++) hi += P(k); hi /= (iHi1 - iHi0 + 1); }
+      for (let k = iH0; k <= iH1; k++) band[k - iH0] = P(k);
+      const med = median(band) * 10 ** -3.5; let hc = 0; for (const v of band) if (v < med) hc++;
+      short.lo.push(lo); short.hi.push(hi); short.holes.push(hc / band.length);
+      if (f % 1500 === 0) { progress(0.5 + 0.3 * f / nS); await tick(); }
+    }
+  }
+  progress(0.8);
+  const freqs = new Float64Array(bins); for (let k = 0; k < bins; k++) freqs[k] = k * sr / N;
+  for (let k = 0; k < bins; k++) meanPow[k] /= Math.max(meanN, 1);
+  st.meanPow = meanPow;
+  return { st, freqs, spectra, times, N, short };
+}
+
+function findCutoff(D, freqs, sr, floorDb) {
+  const df = freqs[1] - freqs[0];
+  const a = Math.floor(800 / df), b = Math.floor(150 / df), top = Math.floor(freqs.length * 0.995), lo = Math.floor(2000 / df);
+  const res = { cutoffHz: null, dropDb: null, reachHz: null };
+  const mean = (s, e) => { let t = 0; for (let i = s; i < e; i++) t += D[i]; return t / (e - s); };
+  let best = null;
+  for (let j = lo + a; j < top - a; j++) {
+    const left = mean(j - a, j - b), right = mean(j + b, j + a), drop = left - right;
+    if (drop < 15) continue;
+    const above = D.subarray(j + b, top); if (!above.length) continue;
+    if (percentile(above, 95) < left - 20) { best = { j, drop, left }; break; }
+  }
+  if (best) {
+    const aboveFloor = median(D.subarray(best.j + b, top)), lvl = aboveFloor + 10;
+    let k = best.j + a; while (k > lo && D[k] < lvl) k--;
+    res.cutoffHz = freqs[k]; res.dropDb = Math.round(best.drop * 10) / 10; res.aboveCutoffDb = Math.round(aboveFloor * 10) / 10;
+    const lref = mean(Math.max(0, k - Math.floor(1500 / df)), Math.max(1, k - Math.floor(500 / df)));
+    let i3 = -1; for (let i = Math.max(0, k - Math.floor(2000 / df)); i < D.length; i++) if (D[i] < lref - 3) { i3 = i; break; }
+    let i30 = -1; if (i3 >= 0) for (let i = i3; i < D.length; i++) if (D[i] < lref - 30) { i30 = i; break; }
+    if (i3 >= 0 && i30 >= 0) res.transitionHz = Math.round(freqs[i30] - freqs[i3]);
+  }
+  const mid = percentile(D.subarray(Math.floor(200 / df), Math.floor(4000 / df)), 90);
+  res.midRefDb = mid;
+  const thr = Math.max(floorDb + 20, mid - 90);
+  let r = -1, f45 = -1;
+  for (let i = 0; i < top; i++) { if (D[i] > thr) r = i; if (D[i] > mid - 45) f45 = i; }
+  res.reachHz = r >= 0 ? freqs[r] : null; res.fMinus45Hz = f45 >= 0 ? freqs[f45] : null;
+  return res;
+}
+
+function lossyFingerprint(short, fc) {
+  const n = short.lo.length; if (n < 50) return {};
+  const medLo = median(short.lo), act = [];
+  for (let i = 0; i < n; i++) if (short.lo[i] > medLo * 1e-3) act.push(i);
+  if (act.length < 50) return {};
+  let h = 0; for (const i of act) h += short.holes[i];
+  const out = { holesPct: Math.round(h / act.length * 10000) / 100 };
+  if ((fc == null || fc > 19500) && short.hi.some(v => v > 0)) {
+    const r = act.map(i => 10 * Math.log10(short.hi[i] / short.lo[i]));
+    out.hfGatingDb = Math.round((percentile(r, 50) - percentile(r, 5)) * 10) / 10;
+  }
+  return out;
+}
+
+// ------------------------------------------- codec frame-grid fingerprint
+// Re-analyse with the 2048-sample MDCT (1024 hop) that AAC / Vorbis long blocks use, at every frame offset.
+// A decoded lossy file shows many quantized-away coefficients at exactly one offset. Score = best / median (genuine ≈ 1.0–1.3).
+async function codecGrid(chs, sr, progress) {
+  const N = 2048, M = 1024, F = 40, regions = 4;
+  if (sr > 48000) return null;
+  const L = chs[0].length; if (L < sr * 6 + (F + 2) * M + N) return null;
+  const x = new Float64Array(L); for (let c = 0; c < chs.length; c++) { const a = chs[c]; for (let i = 0; i < L; i++) x[i] += a[i] / chs.length; }
+  const Mh = M + 1, kai = new Float64Array(Mh), I0 = z => { let s = 1, t = 1; for (let k = 1; k < 50; k++) { t *= (z / 2 / k) ** 2; s += t; } return s; };
+  const beta = Math.PI * 4; for (let n = 0; n < Mh; n++) { const r = 2 * n / (Mh - 1) - 1; kai[n] = I0(beta * Math.sqrt(1 - r * r)) / I0(beta); }
+  const cs = new Float64Array(Mh); let acc = 0; for (let n = 0; n < Mh; n++) { acc += kai[n]; cs[n] = acc; }
+  const kbd = new Float64Array(N), sine = new Float64Array(N), vorb = new Float64Array(N);
+  for (let n = 0; n < M; n++) { kbd[n] = Math.sqrt(cs[n] / cs[Mh - 1]); kbd[N - 1 - n] = kbd[n]; }
+  for (let n = 0; n < N; n++) { sine[n] = Math.sin(Math.PI * (n + 0.5) / N); vorb[n] = Math.sin(Math.PI / 2 * sine[n] ** 2); }
+  const wins = [['AAC (KBD window)', kbd], ['AAC (sine window)', sine], ['Vorbis', vorb]];
+  const H = M / 2, q = M / 2, u = new Float64Array(M);
+  const twR = new Float64Array(H), twI = new Float64Array(H), poR = new Float64Array(H), poI = new Float64Array(H);
+  for (let m = 0; m < H; m++) { twR[m] = Math.cos(-Math.PI * (m + 0.25) / M); twI[m] = Math.sin(-Math.PI * (m + 0.25) / M); poR[m] = Math.cos(-Math.PI * m / M); poI[m] = Math.sin(-Math.PI * m / M); }
+  const fk = k => (k + 0.5) * sr / 2 / M;
+  const bands = [[3000, 15000], [12000, Math.min(20000, sr / 2 * 0.95)]].map(([lo, hi]) => { const ix = []; for (let k = 0; k < M; k++) if (fk(k) > lo && fk(k) < hi) ix.push(k); return ix; });
+  const starts = []; for (let r = 0; r < regions; r++) starts.push(Math.floor(sr * 2 + r * (L - (F + 2) * M - N - sr * 2) / (regions - 1)));
+  const re = new Float64Array(H), im = new Float64Array(H), mag = new Float64Array(M);
+  const scores = {}; let step = 0; const total = wins.length * regions * M;
+  for (const [name, w] of wins) {
+    const perRegion = [];
+    for (const s0 of starts) {
+      const vals = bands.map(() => new Float64Array(M));
+      for (let o = 0; o < M; o++) {
+        const cnt = bands.map(() => 0), tot = bands.map(() => 0);
+        for (let f = 0; f < F; f++) {
+          const b0 = s0 + o + f * M;
+          // TDAC fold (−c_r − d, a − b_r) → DCT-IV via an M/2-point complex FFT
+          for (let n = 0; n < q; n++) {
+            u[n] = -x[b0 + M + q - 1 - n] * w[M + q - 1 - n] - x[b0 + M + q + n] * w[M + q + n];
+            u[q + n] = x[b0 + n] * w[n] - x[b0 + M - 1 - n] * w[M - 1 - n];
+          }
+          for (let m = 0; m < H; m++) { const ar = u[2 * m], ai = u[M - 1 - 2 * m]; re[m] = ar * twR[m] - ai * twI[m]; im[m] = ar * twI[m] + ai * twR[m]; }
+          fftPow2(re, im);
+          for (let m = 0; m < H; m++) { const yr = re[m] * poR[m] - im[m] * poI[m], yi = re[m] * poI[m] + im[m] * poR[m]; mag[2 * m] = Math.abs(yr); mag[M - 1 - 2 * m] = Math.abs(yi); }
+          for (let bi = 0; bi < bands.length; bi++) {
+            const ix = bands[bi]; let e = 0; for (const k of ix) e += mag[k] * mag[k];
+            const ref = Math.sqrt(e / ix.length); if (ref <= 1e-5) continue;
+            const th = ref * 0.01; let z = 0; for (const k of ix) if (mag[k] < th) z++;
+            cnt[bi] += z; tot[bi] += ix.length;
+          }
+        }
+        for (let bi = 0; bi < bands.length; bi++) vals[bi][o] = tot[bi] ? cnt[bi] / tot[bi] : 0;
+        if (++step % 64 === 0) { progress && progress(step / total); await tick(); }
+      }
+      perRegion.push(Math.max(...vals.map(v => { const srt = Float64Array.from(v).sort(); return Math.max(...v) / (percentileSorted(srt, 50) + 1e-4); })));
+    }
+    perRegion.sort((a, b) => a - b); scores[name] = Math.round(percentileSorted(Float64Array.from(perRegion), 50) * 100) / 100;
+  }
+  const best = Object.keys(scores).reduce((a, b) => scores[a] >= scores[b] ? a : b);
+  return { scores, best, score: scores[best] };
+}
+
+// --------------------------------------------- loudness (BS.1770 / EBU R128)
+function kWeight(x, fs) {
+  let K = Math.tan(Math.PI * 1681.974450955533 / fs);
+  const Vh = 10 ** (3.999843853973347 / 20), Vb = Vh ** 0.4996667741545416, Q = 0.7071752369554196;
+  let a0 = 1 + K / Q + K * K;
+  const b0 = (Vh + Vb * K / Q + K * K) / a0, b1 = 2 * (K * K - Vh) / a0, b2 = (Vh - Vb * K / Q + K * K) / a0;
+  const a1 = 2 * (K * K - 1) / a0, a2 = (1 - K / Q + K * K) / a0;
+  K = Math.tan(Math.PI * 38.13547087602444 / fs); const Q2 = 0.5003270373238773;
+  const c0 = 1 + K / Q2 + K * K, c1 = 2 * (K * K - 1) / c0, c2 = (1 - K / Q2 + K * K) / c0;
+  const y = new Float64Array(x.length);
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0, z1 = 0, z2 = 0;
+  for (let i = 0; i < x.length; i++) {
+    const v = x[i];
+    const s = b0 * v + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2; x2 = x1; x1 = v;
+    const o = s - 2 * y1 + y2 - c1 * z1 - c2 * z2; y2 = y1; y1 = s; z2 = z1; z1 = o;
+    y[i] = o;
+  }
+  return y;
+}
+
+function loudness(chs, fs) {
+  const C = chs.length, W = C === 6 ? [1, 1, 1, 0, 1.41, 1.41] : new Array(C).fill(1);
+  const kw = chs.map(c => kWeight(c, fs));
+  const L = kw[0].length, step = Math.round(fs * 0.1);
+  // cumulative energy per 100 ms step
+  const nSteps = Math.floor(L / step), E = new Float64Array(nSteps);
+  for (let s = 0; s < nSteps; s++) { let e = 0; for (let c = 0; c < C; c++) { if (!W[c]) continue; const y = kw[c]; let t = 0; for (let i = s * step; i < (s + 1) * step; i++) t += y[i] * y[i]; e += W[c] * t; } E[s] = e; }
+  const blockLoud = (nb) => { const out = []; for (let s = 0; s + nb <= nSteps; s++) { let e = 0; for (let j = 0; j < nb; j++) e += E[s + j]; out.push(e / (nb * step)); } return out; };
+  const toLufs = p => -0.691 + 10 * Math.log10(p);
+  const allM = blockLoud(4), allS = blockLoud(30);
+  const maxM = allM.length ? Math.max(...allM.map(toLufs)) : null, maxS = allS.length ? Math.max(...allS.map(toLufs)) : null;
+  const m = allM.filter(p => toLufs(p) > -70);
+  let I = null;
+  if (m.length) { const rel = toLufs(m.reduce((a, b) => a + b, 0) / m.length) - 10; const g = m.filter(p => toLufs(p) > rel); if (g.length) I = toLufs(g.reduce((a, b) => a + b, 0) / g.length); }
+  const s = allS.filter(p => toLufs(p) > -70);
+  let LRA = null;
+  if (s.length) { const rel = toLufs(s.reduce((a, b) => a + b, 0) / s.length) - 20; const g = s.filter(p => toLufs(p) > rel).map(toLufs).sort((a, b) => a - b); if (g.length) LRA = percentileSorted(g, 95) - percentileSorted(g, 10); }
+  return { integratedLufs: I, lraLu: LRA, maxMomentaryLufs: maxM, maxShortTermLufs: maxS };
+}
+
+const tpCache = new Map();
+function truePeak(chs, fs, samplePeak) {
+  const up = fs <= 48000 ? 4 : fs <= 96000 ? 2 : 1;
+  if (up === 1) return 20 * Math.log10(Math.max(...samplePeak));
+  let H = tpCache.get(up);
+  const taps = 12; // taps per phase (48-tap total at 4x, like ITU-R BS.1770 Annex 2)
+  if (!H) {
+    H = [];
+    const T = taps * up, c = (T - 1) / 2;
+    for (let p = 0; p < up; p++) {
+      const h = new Float64Array(taps);
+      for (let k = 0; k < taps; k++) {
+        const n = k * up + p, t = (n - c) / up;
+        const sinc = t === 0 ? 1 : Math.sin(Math.PI * t) / (Math.PI * t);
+        const win = 0.42 - 0.5 * Math.cos(2 * Math.PI * (n + 0.5) / T) + 0.08 * Math.cos(4 * Math.PI * (n + 0.5) / T);
+        h[k] = sinc * win;
+      }
+      let s = 0; for (const v of h) s += v; for (let k = 0; k < taps; k++) h[k] /= s;
+      H.push(h);
+    }
+    tpCache.set(up, H);
+  }
+  let best = 0;
+  chs.forEach((x, c) => {
+    const thr = samplePeak[c] * 0.25; best = Math.max(best, samplePeak[c]);
+    for (let i = taps; i < x.length - taps; i++) {
+      if (Math.abs(x[i]) < thr) continue;
+      for (let p = 0; p < up; p++) {
+        const h = H[p]; let acc = 0;
+        for (let k = 0; k < taps; k++) acc += h[k] * x[i - k + (taps >> 1)];
+        const a = Math.abs(acc); if (a > best) best = a;
+      }
+    }
+  });
+  return 20 * Math.log10(best);
+}
+
+// ------------------------------------------------------- mastering metrics
+const OCTAVES = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+function masteringMetrics(st, freqs, lv, sr, ch, lossy) {
+  const m = {}, I = lv.integratedLufs, tp = lv.truePeakDbtp, smax = lv.maxShortTermLufs;
+  const r1 = v => Math.round(v * 10) / 10;
+  if (I != null && tp != null) m.plrDb = r1(tp - I);
+  if (smax != null && tp != null) m.psrDb = r1(tp - smax);
+  const pk = Math.max(...lv.samplePeakDbfs), rms = Math.max(...lv.rmsDbfs);
+  if (isFinite(pk) && isFinite(rms)) m.crestDb = r1(pk - rms);
+  const P = st.meanPow;
+  if (P) {
+    const b = OCTAVES.map(fc => { let t = 0, n = 0; for (let k = 0; k < freqs.length; k++) if (freqs[k] >= fc / Math.SQRT2 && freqs[k] < fc * Math.SQRT2) { t += P[k]; n++; } return fc < sr / 2 && n ? 10 * Math.log10(t + 1e-30) : null; });
+    const ref = b[OCTAVES.indexOf(1000)];
+    m.octaveBalanceDb = OCTAVES.map((fc, i) => [fc, b[i] == null ? null : r1(b[i] - ref)]);
+  }
+  if (ch >= 2 && st.mid2 > 0 && st.side2 > 0) m.sideVsMidDb = r1(10 * Math.log10(st.side2 / st.mid2));
+  const notes = [], clips = lv.clipRuns.reduce((a, c) => a + c, 0);
+  if (clips) notes.push(lossy
+    ? { t: 'warn', s: `${clips} runs of full-scale samples after decoding. In a lossy file the browser's decoder clamps overs to full scale, so these may come from decoding rather than from the master.` }
+    : { t: 'bad', s: `${clips} clipping runs (3 or more consecutive full-scale samples). The master is clipped.` });
+  if (tp != null && I != null) {
+    const lim = I > -14 ? -2 : -1;
+    if (tp > lim) notes.push({ t: 'warn', s: `True peak ${tp > 0 ? '+' : ''}${tp.toFixed(1)} dBTP is above Spotify's ${lim} dBTP recommendation for a master at ${I.toFixed(1)} LUFS, so it may distort when encoded for streaming.` });
+    if (I > -14) notes.push({ t: 'info', s: `${I.toFixed(1)} LUFS is ${(I + 14).toFixed(1)} LU louder than Spotify's −14 LUFS target; it will be turned down on playback.` });
+  }
+  if (m.plrDb != null && m.plrDb < 9) notes.push({ t: 'warn', s: `PLR ${m.plrDb} dB: a heavily limited, compressed master.` });
+  const dc = Math.max(...lv.dcOffsetPct.map(Math.abs));
+  if (dc >= 0.1) notes.push({ t: 'info', s: `DC offset ${dc.toFixed(2)}%: small and usually inaudible, but it wastes some headroom.` });
+  if (lv.lrCorrelation != null && lv.lrCorrelation < 0) notes.push({ t: 'bad', s: `Negative L/R correlation (${lv.lrCorrelation.toFixed(2)}): phase problems, the mono sum loses level.` });
+  else if (lv.lrCorrelation != null && lv.lrCorrelation < 0.3) notes.push({ t: 'warn', s: `Low L/R correlation (${lv.lrCorrelation.toFixed(2)}): very wide; check mono compatibility.` });
+  if (m.sideVsMidDb != null && m.sideVsMidDb > -3) notes.push({ t: 'warn', s: `The side signal is only ${Math.abs(m.sideVsMidDb)} dB below mid: a very wide stereo image.` });
+  m.notes = notes;
+  return m;
+}
+
+// ----------------------------------------------------------------- verdict
+const nearestSourceRate = cut => { for (const s of STD_RATES) if (cut <= s / 2 * 1.02) return s; return null; };
+function guessLossy(c) {
+  // Two calibrations, LAME 3.100 via ffmpeg 6.1 at 44.1 kHz. Synthetic signals: 128k 17.0, 192k/V2 19.2, 256k 20.0,
+  // 320k 20.4-20.7 kHz. Real music (commercial CD-quality FLAC): 128k 16.8, 192k 18.85, V2 18.8, 256k 19.5, 320k 20.2,
+  // Opus 160k 20.2. The cutoff depends on the material, so the bitrate is an estimate.
+  const k = c / 1000;
+  if (k < 11.5) return 'very low-bitrate lossy (≤64 kbps) or a ~22 kHz-rate source';
+  if (k < 15.5) return 'low-bitrate lossy (~80–112 kbps MP3/AAC/WMA)';
+  if (k < 17.8) return '~128 kbps lossy (MP3 128 cuts at about 16.8–17 kHz)';
+  if (k < 19.3) return '~160–192 kbps MP3 or LAME V2–V4';
+  if (k < 20.05) return '~192–256 kbps MP3';
+  if (k < 20.9) return '~256–320 kbps MP3, Opus, or a mastering low-pass';
+  return null;
+}
+
+function verdict(R) {
+  const v = [], sr = R.analysisRate, nyq = sr / 2;
+  const d = R.declared, kind = d.lossless === false ? 'lossy' : 'lossless';
+  const bits = d.bits, fc = R.spectral.cutoffHz, cut = R.spectral, fp = R.fingerprint;
+  let realRate = sr, realBits = null, realSrc = null, lossySrc = false, score = 0, conf = 'high', upsampled = false;
+  const containerOk = R.containerCheck.length === 0;
+  const eff = R.effectiveBits; // integer grid size or null
+  if (kind === 'lossless') {
+    if (d.float) {
+      realBits = eff || '32-bit float (true float data)';
+      if (eff && eff <= 20) v.push({ t: 'bad', s: `Float file, but every sample sits on a ${eff}-bit grid. Real resolution is only ${eff}-bit.` });
+      else if (eff === 24) v.push({ t: 'info', s: 'Float file whose samples all sit on a 24-bit grid. Real resolution is 24-bit, which is normal for DAW exports.' });
+    } else if (bits && bits > 24 && (!eff || eff === 24)) {
+      realBits = bits; v.push({ t: 'info', s: `${bits}-bit integer file: the browser decodes to 32-bit float, so resolution above 24 bits can't be checked here.` });
+    } else if (bits && eff && eff < bits) {
+      realBits = eff; v.push({ t: 'bad', s: `Declared ${bits}-bit, but the lowest ${bits - eff} bits are always zero. It is really ${eff}-bit, zero-padded.` });
+    } else if (bits) realBits = bits;
+  }
+  if (fc) {
+    const guess = guessLossy(fc); let src = nearestSourceRate(fc);
+    if (kind !== 'lossy' && src && src < sr) {
+      if (sr >= 88200 && fc < 0.9 * nyq) upsampled = true;
+      else if (sr === 48000 && fc >= 20500 && fc <= 22300 && !guess) { v.push({ t: 'warn', s: `Content ends at ${(fc / 1000).toFixed(1)} kHz in a 48 kHz file. It may have been resampled from 44.1 kHz.` }); conf = 'medium'; }
+    }
+    if (upsampled && cut.fMinus45Hz) {
+      src = nearestSourceRate(Math.min(fc, cut.fMinus45Hz) * 0.98) || src;
+      v.push({ t: 'bad', s: `Content stops sharply at ${(fc / 1000).toFixed(1)} kHz, but the file is ${sr / 1000} kHz and could reach ${nyq / 1000} kHz. It was upsampled from about ${src / 1000} kHz, so the extra resolution is fake.` });
+      realRate = src;
+      if (typeof realBits === 'number' && realBits > 16) v.push({ t: 'info', s: "After resampling, the bit depth can't be proven. The source was most likely 16-bit." });
+    }
+    if (guess) {
+      if (kind === 'lossy') v.push({ t: 'info', s: `Cutoff at ${(fc / 1000).toFixed(1)} kHz is typical of ${guess}.` });
+      else {
+        const tw = cut.transitionHz;
+        if (fc >= 19500 && fc <= 20900 && tw != null && tw > 800 && (cut.dropDb ?? 99) < 32) {
+          score += 1; v.push({ t: 'warn', s: `Gentle low-pass at ${(fc / 1000).toFixed(1)} kHz (${tw} Hz from −3 to −30 dB). Lossy encoders measured here cut within 150–620 Hz at this frequency, so this looks more like a mastering or converter filter (weak hint only).` });
+        } else { score += fc < 19700 ? 3 : 2; realSrc = guess; v.push({ t: 'bad', s: `Sharp encoder-style low-pass at ${(fc / 1000).toFixed(1)} kHz${tw ? ` (${tw} Hz transition)` : ''}, typical of ${guess}.` }); }
+      }
+      if (src && src < 44100 && fc < 11500 && kind !== 'lossy') realRate = src;
+    }
+  } else {
+    const reach = cut.reachHz;
+    if (reach && sr > 48000 && reach > 26000) v.push({ t: 'good', s: `Real content up to about ${(reach / 1000).toFixed(1)} kHz, well above 24 kHz. Genuine high-resolution bandwidth.` });
+    else if (sr > 48000) { v.push({ t: 'warn', s: 'No sharp low-pass, but no real content above 24 kHz. Probably upsampled with a soft filter (or a band-limited recording), not real hi-res.' }); conf = 'medium'; upsampled = true; realRate = nearestSourceRate((cut.fMinus45Hz || 22000) * 0.98) || 48000; }
+    else v.push({ t: 'good', s: 'No encoder or resampler low-pass. Full bandwidth for this sample rate.' });
+  }
+  if (R.resampledByBrowser) v.push({ t: 'warn', s: `This browser could not decode at the file's own ${d.sampleRate / 1000} kHz, so it resampled to ${sr / 1000} kHz. Sample-rate and bandwidth findings are less reliable.` });
+  if (!d.sampleRate) v.push({ t: 'warn', s: `The header's sample rate could not be read, so the audio was analysed at ${sr / 1000} kHz.` });
+  if (kind === 'lossy' && d.codec === 'Opus') v.push({ t: 'info', s: 'Opus always decodes at 48 kHz; its maximum audio bandwidth is 20 kHz.' });
+  if (fp && kind !== 'lossy') {
+    const h = fp.holesPct, g = fp.hfGatingDb;
+    if (h != null && h >= 0.6) { score += 2; v.push({ t: 'bad', s: `Spectral holes ${h}% (lossless is normally under 0.35%). This is a codec-quantization fingerprint.` }); }
+    else if (h != null && h >= 0.35) { score += 1; v.push({ t: 'warn', s: `Spectral holes ${h}%, slightly above the lossless norm (weak hint).` }); }
+    if (g != null && g >= 25) { score += 2; v.push({ t: 'bad', s: `The 16.5–19.5 kHz band switches on and off frame by frame (spread ${g} dB). This is MP3-style band gating.` }); }
+    const cg = fp.codecGrid;
+    if (cg && cg.score >= 2.2) { score += 3; realSrc = realSrc || `${cg.best.split(' (')[0]}, frame-grid match`; v.push({ t: 'bad', s: `Codec frame-grid match: re-analysed on a 1024-sample ${cg.best} MDCT grid, one frame offset shows ${cg.score}× more quantized-away coefficients than the others (genuine audio ≈ 1.0–1.3). Decoded from a lossy ${cg.best.split(' (')[0]} file.` }); }
+    else if (cg && cg.score >= 1.6) { score += 1; v.push({ t: 'warn', s: `Weak codec frame-grid hint (${cg.best}, ${cg.score}×; genuine ≈ 1.0–1.3).` }); }
+  }
+  if (kind !== 'lossy') { if (score >= 3) lossySrc = true; else if (score === 2) { lossySrc = true; conf = 'medium'; } else if (score === 1) conf = 'medium'; }
+  const lv = R.levels;
+  if (lv.stereoNote) v.push({ t: 'warn', s: 'Stereo: ' + lv.stereoNote });
+  const df = R.defects || {}; let defective = false;
+  if (df.diffS != null && Math.abs(df.diffS) > Math.max(0.25, 0.005 * df.headerS)) {
+    defective = true;
+    v.push({ t: 'bad', s: df.diffS < 0
+      ? `Defective: the header says ${df.headerS.toFixed(2)} s, but only ${df.decodedS.toFixed(2)} s of audio decodes (${(-df.diffS).toFixed(2)} s missing). The file is truncated or damaged.`
+      : `Defective: ${df.decodedS.toFixed(2)} s of audio decodes, but the header says ${df.headerS.toFixed(2)} s. The header is wrong.` });
+  }
+  const brc = R.bitrate || {}, inflated = brc.inflated;
+  for (const f of brc.findings || []) v.push({ t: f.t, s: 'Bitrate: ' + f.s });
+  for (const c of R.containerCheck) v.push({ t: 'bad', s: c });
+  let q;
+  const kb = brc.measuredKbps || d.bitrateKbps;
+  if (kind === 'lossy' && inflated) q = `Upconverted ${d.codec}: ${kb} kbps file, real quality ${inflated.realKbps ? 'about ' + inflated.realKbps + ' kbps' : 'lower than declared'}`;
+  else if (kind === 'lossy') q = `Lossy ${d.codec}${kb ? ' @ ' + kb + ' kbps' : ''}`;
+  else if (lossySrc) q = 'Lossless file, lossy source';
+  else if (upsampled) q = 'Lossless, but upsampled';
+  else if (typeof realBits === 'number' && bits && realBits < bits && !d.float) q = `Lossless, but really ${realBits}-bit`;
+  else if (d.float && typeof eff === 'number' && eff <= 20) q = `Lossless, but really ${eff}-bit`;
+  else q = 'Genuine lossless';
+  const vy = R.vinyl;
+  if (vy && (vy.level === 'likely' || vy.level === 'possible')) {
+    q += vy.level === 'likely' ? ' (vinyl rip)' : ' (possibly vinyl rip)';
+    v.push({ t: 'info', s: `${vy.level === 'likely' ? 'Likely' : 'Possibly'} a vinyl rip: the side (L−R) channel has a ${vy.band} Hz hump (${vy.sideVsMidDb > 0 ? '+' : ''}${vy.sideVsMidDb} dB vs mid, ${vy.sideVsBassDb > 0 ? '+' : ''}${vy.sideVsBassDb} dB vs side 40–80 Hz). That is the tonearm/cartridge resonance excited by record warps. It is a lossless copy of an analogue transfer: expect surface noise and slight speed wobble, and a higher bit depth only captures the record's own noise.` });
+  }
+  if (defective) q = 'Defective file: ' + q;
+  if (!containerOk && R.extension) q = `Not a real .${R.extension}: ` + q;
+  let rb = typeof realBits === 'number' ? realBits + '-bit' : (kind === 'lossy' ? 'n/a (lossy)' : String(realBits || '?'));
+  if (lossySrc) rb += ' container; meaningless, the source was lossy';
+  else if (upsampled && typeof realBits === 'number' && realBits > 16) rb += " (can't be proven; source likely 16-bit)";
+  const claimed = `${d.codec || '?'} · ${d.sampleRate ? d.sampleRate / 1000 + ' kHz' : '? kHz'}` + (kind !== 'lossy' && bits ? ` · ${bits}-bit` : '') + (kind === 'lossy' && kb ? ` · ${kb} kbps` : '');
+  if (inflated && inflated.confidence === 'medium') conf = 'medium';
+  const honest = !(defective || inflated || lossySrc || upsampled || !containerOk || (typeof realBits === 'number' && bits && realBits < bits && !d.float) || (d.float && typeof eff === 'number' && eff <= 20));
+  if (kind === 'lossless' && !lossySrc && !upsampled && !fc) v.push({ t: 'info', s: "Limit: the codec frame-grid test catches AAC and Vorbis sources (tested with ffmpeg's AAC 128–320 and Vorbis q6–q10), but a high-bitrate MP3 (LAME V0, sometimes 320) can stay invisible in dense music, and Apple or FDK AAC encoders were not available to test. 'Genuine' means no evidence was found, not proof." });
+  const status = defective ? 'defective' : kind === 'lossy' ? (containerOk && !inflated ? 'lossy' : 'fail') : (honest ? (conf === 'high' ? 'pass' : 'maybe') : 'fail');
+  return { claimed, headline: q, realRate, realBits: rb, matches: honest, confidence: conf, status, details: v };
+}
+
+// --------------------------------------------------------------- pipeline
+// Vinyl-rip signature: record warps -> vertical stylus motion -> SIDE (L-R) signal, amplified by the tonearm/cartridge
+// resonance (~8-15 Hz). Digital masters keep sub-20 Hz content mono and tiny. Same thresholds as the Python tool.
+async function vinylCheck(chs, sr) {
+  if (chs.length < 2) return null;
+  const L = chs[0], Rr = chs[1], N = sr <= 48000 ? 1 << 17 : 1 << 18, w = hann(N);
+  const Ps = new Float64Array(N / 2 + 1), Pm = new Float64Array(N / 2 + 1);
+  const re = new Float64Array(N), im = new Float64Array(N), re2 = new Float64Array(N), im2 = new Float64Array(N);
+  let nfr = 0;
+  for (let o = 0; o + N <= L.length; o += N / 2) {
+    for (let i = 0; i < N; i++) { const a = L[o + i], b = Rr[o + i]; re[i] = (a - b) / 2 * w[i]; re2[i] = (a + b) / 2 * w[i]; im[i] = 0; im2[i] = 0; }
+    fftPow2(re, im); fftPow2(re2, im2);
+    for (let k = 0; k <= N / 2; k++) { Ps[k] += re[k] * re[k] + im[k] * im[k]; Pm[k] += re2[k] * re2[k] + im2[k] * im2[k]; }
+    nfr++; await tick();
+  }
+  if (nfr < 4) return null;
+  const df = sr / N;
+  const B = (P, a, c) => { let s = 0, n = 0; for (let k = Math.ceil(a / df); k * df < c; k++) { s += P[k]; n++; } return (n ? s / n : 0) + 1e-30; };
+  const db = v => 10 * Math.log10(v), r1 = v => Math.round(v * 10) / 10;
+  let a0 = 6; for (let a = 6; a <= 14; a++) if (B(Ps, a, a + 4) > B(Ps, a0, a0 + 4)) a0 = a;
+  const ps = B(Ps, a0, a0 + 4);
+  const svm = r1(db(ps / B(Pm, a0, a0 + 4))), svb = r1(db(ps / B(Ps, 40, 80))), hump = r1(db(ps / Math.sqrt(B(Ps, 1.5, 3.5) * B(Ps, 30, 45))));
+  const pts = (svb >= 0 ? 2 : svb >= -5 ? 1 : 0) + (svm >= 0 ? 2 : svm >= -6 ? 1 : 0) + (hump >= 15 ? 2 : hump >= 8 ? 1 : 0);
+  return { band: `${a0}-${a0 + 4}`, sideVsMidDb: svm, sideVsBassDb: svb, humpDb: hump, points: pts, level: pts >= 5 && svb >= 6 && svm >= 3 ? 'likely' : pts >= 3 ? 'possible' : 'none' };
+}
+
+// Is there detail BELOW what 16-bit can hold? Quietest frame's 4-16 kHz median-bin level vs 16-bit TPDF dither
+// measured the same way. Skips the first/last 10 s (fades) and exactly-silent frames. Proven at >= 10 dB below.
+async function hiresProof(x, sr) {
+  const N = 4096, w = hann(N), re = new Float64Array(N), im = new Float64Array(N);
+  const df = sr / N, k0 = Math.ceil(4000 / df), k1 = Math.floor(Math.min(16000, sr / 2 - 1000) / df);
+  const tmp = new Float64Array(k1 - k0 + 1);
+  const frameLv = (src, off) => {
+    let e = 0;
+    for (let i = 0; i < N; i++) { const v = src[off + i]; e += v * v; re[i] = v * w[i]; im[i] = 0; }
+    if (e === 0) return null;
+    fftPow2(re, im);
+    for (let k = k0; k <= k1; k++) tmp[k - k0] = re[k] * re[k] + im[k] * im[k];
+    return 10 * Math.log10(median(tmp) + 1e-300);
+  };
+  // reference: 16-bit TPDF dither (deterministic LCG)
+  let seed = 12345; const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const ref = new Float64Array(N * 64); for (let i = 0; i < ref.length; i++) ref[i] = (rnd() - rnd()) / 32768;
+  const rl = []; for (let o = 0; o + N <= ref.length; o += N) rl.push(frameLv(ref, o));
+  const refDb = median(rl);
+  const skip = x.length / sr > 40 ? 10 * sr : 0;
+  let q = Infinity;
+  for (let o = skip, c = 0; o + N <= x.length - skip; o += N, c++) {
+    const l = frameLv(x, o); if (l != null && l < q) q = l;
+    if (c % 400 === 399) await tick();
+  }
+  if (!isFinite(q)) return null;
+  const margin = refDb - q;
+  return { quietestVs16bitDb: Math.round(-margin * 10) / 10, proven: margin >= 10 };
+}
+
+// 0-100: authenticity 40, cleanliness 40, proven 24-bit 10, dynamics 10
+function qualityScore(R) {
+  const cl = v => Math.max(0, Math.min(1, v)), v = R.verdict, lv = R.levels || {}, st = v.status;
+  const A = { pass: v.confidence === 'high' ? 40 : 35, maybe: 20, lossy: 15, fail: 5, defective: 0 }[st] ?? 0;
+  const clips = (lv.clipRuns || [0]).reduce((a, b) => a + b, 0);
+  const cClip = clips === 0 ? 12 : clips <= 5 ? 9 : clips <= 50 ? 5 : 0;
+  const tp = lv.truePeakDbtp;
+  const cTp = tp != null && isFinite(tp) ? Math.round(120 * cl((2 - tp) / 3)) / 10 : 6;
+  const cDef = st === 'defective' ? 0 : 8;
+  const dc = Math.max(...(lv.dcOffsetPct || [0]).map(Math.abs));
+  const cDc = dc < 0.05 ? 4 : dc < 0.2 ? 2 : 0;
+  const reach = (R.spectral && R.spectral.reachHz) || 0;
+  const cBw = reach >= Math.min(19500, R.analysisRate / 2 * 0.88) ? 4 : 0;
+  const C = Math.round((cClip + cTp + cDef + cDc + cBw) * 10) / 10;
+  const Rb = R.hiresProof && R.hiresProof.proven && (st === 'pass' || st === 'maybe') ? 10 : 0;
+  const plr = R.mastering && R.mastering.plrDb, lra = lv.lraLu;
+  const D = Math.round(((plr != null ? cl((plr - 8) / 6) * 6 : 0) + (lra != null && isFinite(lra) ? cl((lra - 2) / 6) * 4 : 0)) * 10) / 10;
+  return { total: Math.round((A + C + Rb + D) * 10) / 10, authenticity: A, cleanliness: C, proven24: Rb, dynamics: D,
+    parts: { clipping: cClip, truePeak: cTp, noDefects: cDef, dcOffset: cDc, bandwidth: cBw } };
+}
+
+async function analyze({ bytes, name, decoded, decodeRate, progress = () => {} }) {
+  const R = { file: name, sizeBytes: bytes.length };
+  const ext = (name.includes('.') ? name.split('.').pop() : '').toLowerCase();
+  R.extension = ext;
+  const sig = detectSignature(bytes); R.signature = sig.kind; R.signatureNotes = sig.notes;
+  const H = parseHeader(bytes, sig);
+  const dur = decoded ? decoded.length / decodeRate : (H.extra.durationSec || null);
+  if (H.lossless === false && !H.bitrateKbps && dur) H.bitrateKbps = Math.round(bytes.length * 8 / dur / 1000);
+  R.declared = { ...H, durationSec: dur };
+  if (H.lossless && H.bits && H.sampleRate && H.channels && dur) R.declared.sizeVsPcm = bytes.length * 8 / (dur * H.sampleRate * H.channels * H.bits);
+  // container check
+  const cc = [];
+  const exp = EXT_EXPECT[ext];
+  if (exp && !exp.includes(sig.kind)) cc.push(`Extension .${ext} but the file is really ${sig.kind}.`);
+  if (['WAV', 'RF64', 'BW64', 'AIFF', 'AIFC'].includes(sig.kind) && H.codec && !H.codec.startsWith('PCM')) cc.push(`${sig.kind} container holds ${H.codec}, not plain PCM.`);
+  if (['wav', 'aiff', 'aif', 'flac', 'ape', 'wv', 'alac'].includes(ext) && H.lossless === false) cc.push(`Lossless-type extension, but the codec (${H.codec}) is lossy.`);
+  R.containerCheck = cc;
+  if (!decoded) return R;
+  const chs = decoded.channels, sr = decodeRate;
+  R.analysisRate = sr;
+  R.resampledByBrowser = !!(H.sampleRate && H.sampleRate !== sr && H.codec !== 'Opus');
+  const A = await analyzeSamples(chs, sr, { progress });
+  const st = A.st;
+  const g = [8, 16, 20, 24].filter(k => st.grid[k]);
+  R.effectiveBits = H.lossless !== false ? (g.length ? g[0] : null) : null;
+  let D;
+  if (A.spectra.length) {
+    const bins = A.freqs.length, P = new Float64Array(bins), col = new Float64Array(A.spectra.length);
+    for (let k = 0; k < bins; k++) { for (let i = 0; i < A.spectra.length; i++) col[i] = A.spectra[i][k]; col.sort(); P[k] = percentileSorted(col, 98); }
+    const df = A.freqs[1]; D = medianFilter(P, Math.max(3, Math.floor(150 / df) | 1));
+  } else D = new Float64Array(A.freqs.length).fill(-200);
+  const floor = theoreticalFloorDb(Math.min(R.effectiveBits || 24, 24), A.N);
+  R.spectral = A.spectra.length ? findCutoff(D, A.freqs, sr, floor) : { cutoffHz: null, reachHz: null };
+  R.fingerprint = lossyFingerprint(A.short, R.spectral.cutoffHz);
+  if (H.lossless !== false) { const g = await codecGrid(chs, sr, p => progress(0.6 + 0.25 * p)); if (g) R.fingerprint.codecGrid = g; }
+  progress(0.85); await tick();
+  const n = st.n, db = v => v > 0 ? 20 * Math.log10(v) : -Infinity;
+  const lv = {
+    samplePeakDbfs: [...st.peak].map(db), rmsDbfs: [...st.sumsq].map(s => db(Math.sqrt(s / n))),
+    dcOffsetPct: [...st.sum].map(s => s / n * 100), fullScale: [...st.clip], clipRuns: [...st.cliprun],
+  };
+  Object.assign(lv, loudness(chs, sr)); progress(0.93); await tick();
+  lv.truePeakDbtp = truePeak(chs, sr, [...st.peak]);
+  if (chs.length >= 2) {
+    lv.lrCorrelation = st.ll > 0 && st.rr > 0 ? st.lr / Math.sqrt(st.ll * st.rr) : null;
+    if (st.maxdiff === 0) lv.stereoNote = 'left and right are bit-identical (dual mono, fake stereo).';
+    else if (st.maxsum === 0) lv.stereoNote = 'right = −left, so the mono sum cancels.';
+    else if (st.ll === 0 || st.rr === 0) lv.stereoNote = 'one channel is completely silent.';
+  }
+  R.levels = lv;
+  R.mastering = masteringMetrics(st, A.freqs, lv, sr, chs.length, H.lossless === false);
+  const decodedS = chs[0].length / sr, hS = H.extra.headerDurationSec;
+  R.defects = { decodedS, headerS: hS || null, headerSource: hS ? (H.extra.headerSource || 'container header') : null, diffS: hS ? decodedS - hS : null };
+  R.bitrate = bitrateCheck(R, bytes, H, decodedS);
+  if (H.lossless !== false && !R.resampledByBrowser && (R.effectiveBits == null || R.effectiveBits > 16)) {
+    try { R.hiresProof = await hiresProof(chs[0], sr); } catch (e) { }
+  }
+  if (H.lossless !== false) { try { R.vinyl = await vinylCheck(chs, sr); } catch (e) { } }
+  R.verdict = verdict(R);
+  R.score = qualityScore(R);
+  R._plot = { D, freqs: A.freqs, spectra: A.spectra, times: A.times, duration: chs[0].length / sr };
+  progress(1);
+  return R;
+}
+
+G.AudioCheck = { analyze, qualityScore, hiresProof, vinylCheck, detectSignature, parseHeader, analyzeSamples, findCutoff, lossyFingerprint, loudness, truePeak, verdict, fftPow2, fft9x };
+if (typeof module !== 'undefined') module.exports = G.AudioCheck;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+const EXAMPLE = {"report":{"file":"example_96k_from_mp3.flac","sizeBytes":6124947,"extension":"flac","signature":"FLAC","signatureNotes":[],"declared":{"codec":"FLAC","lossless":true,"sampleRate":96000,"channels":2,"bits":24,"float":false,"bitrateKbps":null,"encoder":"Lavf60.16.100","extra":{"durationSec":20,"headerDurationSec":20,"headerSource":"FLAC STREAMINFO"},"durationSec":20,"sizeVsPcm":0.5316794270833334},"containerCheck":[],"analysisRate":96000,"resampledByBrowser":false,"effectiveBits":24,"spectral":{"cutoffHz":16875,"dropDb":15.6,"reachHz":17109.375,"aboveCutoffDb":-154,"transitionHz":188,"midRefDb":-36.904885635375976,"fMinus45Hz":16687.5},"fingerprint":{"holesPct":7.87},"levels":{"samplePeakDbfs":[-2.085345102183173,-2.5517363418143315],"rmsDbfs":[-13.181292753691714,-13.628542944774571],"dcOffsetPct":[-0.08865622439732154,-0.0874470458800594],"fullScale":[0,0],"clipRuns":[0,0],"integratedLufs":-10.968287334854127,"lraLu":0.7746981644287061,"maxMomentaryLufs":-10.429384986277785,"maxShortTermLufs":-10.537727799808781,"truePeakDbtp":-2.0575382152100437,"lrCorrelation":0.5814961713233714},"mastering":{"plrDb":8.9,"psrDb":8.5,"crestDb":11.1,"octaveBalanceDb":[[31.5,-11.8],[63,-13.4],[125,6.1],[250,7.3],[500,2.7],[1000,0],[2000,-2.2],[4000,-4.8],[8000,-8.6],[16000,-14.9]],"sideVsMidDb":-5.8,"notes":[{"t":"info","s":"-11.0 LUFS is 3.0 LU louder than Spotify's −14 LUFS target; it will be turned down on playback."},{"t":"warn","s":"PLR 8.9 dB: a heavily limited, compressed master."}]},"defects":{"decodedS":20,"headerS":20,"headerSource":"FLAC STREAMINFO","diffS":0},"bitrate":{"findings":[],"measuredKbps":2447,"payloadSource":"file minus metadata","declaredKbps":null,"pcmKbps":4608,"pctOfPcm":53},"verdict":{"claimed":"FLAC · 96 kHz · 24-bit","headline":"Lossless file, lossy source","realRate":44100,"realBits":"24-bit container; meaningless, the source was lossy","matches":false,"confidence":"high","status":"fail","details":[{"t":"bad","s":"Content stops sharply at 16.9 kHz, but the file is 96 kHz and could reach 48 kHz. It was upsampled from about 44.1 kHz, so the extra resolution is fake."},{"t":"info","s":"After resampling, the bit depth can't be proven. The source was most likely 16-bit."},{"t":"bad","s":"Sharp encoder-style low-pass at 16.9 kHz (188 Hz transition), typical of ~128 kbps lossy (MP3 128 cuts at about 16.8–17 kHz)."},{"t":"bad","s":"Spectral holes 7.87% (lossless is normally under 0.35%). This is a codec-quantization fingerprint."}]},"score":{"total":39.9,"authenticity":5,"cleanliness":34,"proven24":0,"dynamics":0.9,"parts":{"clipping":12,"truePeak":12,"noDefects":8,"dcOffset":2,"bandwidth":0}}},"plot":{"curve":[-15.8,-29.1,-19.5,-34.5,-36.9,-36.9,-30.8,-39.8,-41.4,-41.1,-37.6,-40.6,-42.4,-36.6,-40.2,-41.9,-43.5,-43.8,-44.7,-43.3,-44.3,-44.7,-44.7,-45,-45.8,-46.3,-44.8,-40.4,-46,-46.9,-44.7,-42.7,-45.8,-46.9,-46.4,-41.3,-47.7,-47.7,-47.3,-43.4,-47.4,-47.8,-47.4,-45.8,-47.9,-48.4,-47.9,-46.8,-48.5,-49.3,-49,-48.9,-48.9,-49.3,-49.4,-48.8,-49.8,-50,-49.8,-50.5,-48.6,-48.6,-49.9,-50,-49.5,-49.7,-50.2,-51.2,-49,-50.3,-50.8,-50.3,-49.9,-51,-51,-51.1,-50.2,-50.2,-51.1,-50.6,-50.9,-51.7,-51.5,-51.9,-51.9,-51.2,-50.6,-51.3,-52,-51.5,-51.2,-51.5,-52,-52,-50.8,-52.2,-52.2,-52.1,-52.7,-51.4,-51.9,-52,-52.4,-52.6,-52,-52.7,-52.7,-52.1,-52.5,-52.8,-53.4,-53.2,-53.2,-53.2,-52.8,-52.6,-52.7,-53.1,-53.5,-52.8,-52.5,-53.1,-53.7,-53.7,-52.9,-53.5,-53.9,-52.6,-53.3,-53.9,-53.6,-53,-53.3,-54.1,-54,-53.6,-53.3,-53.8,-54.1,-53.8,-53.4,-54.2,-54.5,-54.3,-53.8,-54.4,-54.4,-53.8,-53.5,-54,-54.7,-54.5,-54.2,-54.7,-55.1,-54.6,-53.5,-53.5,-54.2,-54.2,-54.1,-53.8,-54.7,-54.8,-55,-55.4,-54.6,-54.8,-54.2,-54.4,-54.6,-54.2,-55.1,-55.1,-55.1,-55.1,-55,-55,-54.8,-55.6,-55.2,-54.8,-55.3,-55.5,-55.5,-55.4,-54.7,-54.7,-55.3,-55.6,-55.9,-55.7,-55.3,-55,-55.2,-55.2,-54.4,-54.8,-55.2,-55.5,-55.5,-56.6,-57.1,-57.5,-57.6,-57.7,-58.4,-64.7,-77.3,-90.5,-102.6,-113.2,-119.4,-122.7,-128.2,-133.5,-136,-139.1,-139.1,-142.1,-139,-136.4,-141.3,-138.4,-139.3,-140.7,-135.4,-135.4,-142.2,-141,-144.3,-143.4,-142.9,-145.3,-141.1,-139.6,-139.6,-141.2,-140.8,-137.1,-137,-139.4,-140.6,-141.1,-141,-140.2,-140,-137.8,-144.6,-140.1,-143.8,-143.8,-143.9,-144.8,-141.9,-139.5,-134.5,-136.6,-139.5,-142.1,-134.1,-147.2,-145.5,-145.1,-146.1,-146.7,-147.6,-146.8,-147.4,-146.1,-146.1,-145.9,-148.7,-146.2,-145.6,-146.2,-146.2,-147,-150.9,-150.9,-147.5,-153.3,-153.3,-154.5,-154.3,-154.3,-154.7,-154.4,-154.4,-152.6,-148.9,-153.7,-155.2,-151.3,-151.3,-154.6,-157,-162.5,-164.6,-165.9,-165.9,-166.1,-165.8,-168.7,-165.1,-167.2,-168.1,-168.8,-171.1,-168.3,-170.9,-171.7,-171.7,-171.9,-174.2,-174.3,-174.3,-173.3,-173.6,-173.6,-173,-173.7,-173.3,-172.5,-172,-172.1,-174,-173.2,-173.3,-173.2,-173.9,-174.7,-174.7,-174.3,-173.9,-173.9,-174.1,-173.1,-173.4,-174.3,-174.2,-172,-170.3,-164.8,-154.3,-150.7,-150.1,-150,-150.1,-150.3,-151.4,-153.6,-157.3,-160.4,-158.8,-154.1,-152.1,-150.6,-149.4,-148.8,-149.5,-149.5,-149.7,-150.5,-151.6,-155.2,-158.2,-166.8,-167,-160.5,-155.8,-153.8,-151.8,-150.6,-150.6,-150.7,-150.7,-151.3,-152.3,-153.3,-156,-159.9,-165.3,-168.4,-160.7,-157.6,-156,-153.4,-152.6,-151.2,-150.7,-151.1,-151.7,-152.1,-152.9,-155.5,-159.1,-162.7,-168,-169.1,-163,-158.7,-154.1,-153.7,-153.6,-152.8,-152.4,-152.6,-153.2,-153.5,-154.2,-156,-159.3,-163.7,-169.3,-168.5,-161,-160,-157.5,-154.7,-154.5,-153.5,-152.8,-152.5,-153.4,-154.6,-154.7,-155.5,-159.9,-163.1,-170.1,-170.4,-166.3,-161.1,-157.5,-155.7,-154.7,-154.6,-154.1,-153.7,-154.3,-154.9,-155,-155,-158.3,-160.2,-164.7,-169.2,-166.4,-160.4,-158.3,-148.2,-153.9,-153.8,-152.1,-144.9,-151,-154.4,-154.7,-153.3,-157.9,-158.6,-162.9,-170,-170.8,-163.3,-160.8,-158,-156.6,-155.8,-152.9,-153.7,-153.8,-153.8,-153.4,-155.9,-156.3,-158.6,-160.1,-163.2,-172.1,-172.1,-162.2,-160.9,-156.9,-155.3,-155,-154.5,-153.9,-153.3,-153.3,-154.7,-156.1,-156.5,-158.3,-159.8,-166.1,-169.9,-168.2,-158.8,-158.6,-157.6,-156.6,-150.9,-153.3,-153.9,-153.5,-150.3,-153.5,-154.7,-155.9,-157.3,-160.4,-163.5,-167.8,-161.4,-159.1,-157.4,-154.6,-152.5,-151.6,-151.9,-152.6,-150,-150,-152.5,-153.7,-155,-153.2,-158.2,-163.2,-168.9,-161,-156.8,-154.8,-152.6,-146.2,-149.9,-149.9,-148.6,-138.3,-148.7,-148.9,-148.9,-139.6,-151.6,-154.2,-159,-158,-146,-141.4,-138.3,-135.6,-140.4,-144.2,-144.4,-141.9,-141.9,-148.1,-149.3,-150,-148.6,-154.7,-159.9,-164.7,-166.2,-162.1,-158.9,-157.2,-149.5,-153.6,-152.8,-152.7,-147.3,-154.1,-154,-153.2,-150.4,-156,-158.8,-160.5,-164.8,-167.4,-163.4,-161.1,-158.2,-157.3,-156.3,-151.8,-153.9,-155.1,-154.9,-150.9,-154.9,-155.8,-156.1,-159,-161.9,-164.9,-172.3],"nyq":48000,"duration":20,"cols":234,"rows":180,"img":"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"}};
+(function () {
+  const $ = id => document.getElementById(id);
+  let current = null; // { R, plot }
+
+  // ------------------------------------------------------------ formatting
+  const fmtKhz = hz => hz == null ? '—' : (hz / 1000).toFixed(hz % 1000 ? 1 : 0) + ' kHz';
+  const fmtDb = (v, u) => v == null || !isFinite(v) ? '—' : (v > 0 ? '+' : '') + v.toFixed(1) + ' ' + u;
+  const fmtPair = (a, u) => a.map(v => fmtDb(v, '')).join(' / ') + ' ' + u;
+  const fmtSize = b => b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : (b / 1e3).toFixed(0) + ' kB';
+  const fmtDur = s => s == null ? '—' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+  const esc = s => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const dl = (el, rows) => { el.innerHTML = rows.filter(r => r && r[1] != null && r[1] !== '').map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join(''); };
+  const PILL = { defective: ['Defective', 'damaged or truncated'], unreadable: ['Unreadable', 'could not be decoded'], header: ['Header only', 'audio could not be decoded'], pass: ['Matches claim', 'no evidence of fakery'], maybe: ['Probably genuine', 'weak warning signs'], fail: ['Does not match', 'see evidence below'], lossy: ['Lossy file', 'as declared'] };
+
+  function render(R, plot, isExample) {
+    current = { R, plot };
+    const d = R.declared, v = R.verdict, m = R.levels;
+    $('fname').innerHTML = `${esc(R.file)} <em>· ${fmtSize(R.sizeBytes)} · ${fmtDur(d.durationSec)}</em>`;
+    $('exampleTag').hidden = !isExample;
+    $('exampleBtn').hidden = isExample;
+    const pill = $('pill'); pill.className = 'pill ' + v.status;
+    pill.innerHTML = `${PILL[v.status][0]}<small>${PILL[v.status][1]}${['pass', 'maybe', 'fail', 'defective'].includes(v.status) ? ' · confidence ' + v.confidence : ''}</small>`;
+    $('headline').textContent = v.headline;
+    $('claimed').textContent = v.claimed;
+    if (v.status === 'header') { $('real').textContent = v.real; }
+    else $('real').textContent = `${d.lossless === false ? (d.codec || 'lossy') : (v.status === 'fail' && /lossy source/.test(v.headline) ? 'lossy source' : 'lossless')} · ${fmtKhz(v.realRate)} · ${v.realBits}`;
+    const sb = $('scorebox'), sc = R.score;
+    sb.hidden = !sc;
+    if (sc) sb.innerHTML = `<b>${sc.total.toFixed(1)}</b><span>/ 100 quality score</span><span>authenticity ${sc.authenticity}/40 · cleanliness ${sc.cleanliness}/40 · proven 24-bit ${sc.proven24}/10 · dynamics ${sc.dynamics}/10</span>`;
+    const tag = { good: 'OK', warn: 'Note', bad: 'Problem', info: 'Info' };
+    $('evidence').innerHTML = v.details.map(x => `<li class="${x.t}"><b>${tag[x.t]}</b>${esc(x.s)}</li>`).join('');
+    // tables
+    const ext = d.extra || {};
+    dl($('dlHeader'), [
+      ['Extension', '.' + (R.extension || '—')], ['Real format', R.signature], ['Codec', d.codec || '—'],
+      ['Sample rate', fmtKhz(d.sampleRate)], ['Bit depth', d.lossless === false ? 'n/a (lossy)' : (d.bits ? d.bits + '-bit' + (d.float ? ' float' : '') : '—')],
+      ['Channels', d.channels], ['Bitrate', d.bitrateKbps ? d.bitrateKbps + ' kbps' : null],
+      ['Size vs raw PCM', d.sizeVsPcm ? Math.round(d.sizeVsPcm * 100) + '%' : null],
+      ['Encoder', d.encoder], ['MP3 header', ext.xing], ['LAME mode', ext.lameVbrMethod], ['LAME low-pass', ext.lameLowpassHz ? fmtKhz(ext.lameLowpassHz) : null],
+      ['Channel mode', ext.channelMode], ['Opus input rate', ext.inputSampleRate ? fmtKhz(ext.inputSampleRate) : null],
+      ...(R.signatureNotes || []).map(n => ['Note', n]),
+    ]);
+    const sp = R.spectral || {}, fp = R.fingerprint || {};
+    if (!m) { $('dlMeasured').innerHTML = '<dt>Audio</dt><dd>not decoded</dd>'; $('dlLevels').innerHTML = '<dt>Levels</dt><dd>not measured</dd>'; $('masteringPanel').hidden = true; draw(); return; }
+    dl($('dlMeasured'), [
+      ['Effective bits', d.lossless === false ? 'n/a (lossy)' : (R.effectiveBits ? R.effectiveBits + '-bit grid' : (d.float ? 'true float' : '24+'))],
+      ['Analysed at', fmtKhz(R.analysisRate)],
+      ['Vinyl check', R.vinyl ? `${R.vinyl.level === 'none' ? 'no vinyl signs' : R.vinyl.level + ' vinyl rip'} (${R.vinyl.points}/6; side ${R.vinyl.band} Hz ${R.vinyl.sideVsMidDb > 0 ? '+' : ''}${R.vinyl.sideVsMidDb} dB vs mid)` : null],
+      ['24-bit proof', R.hiresProof ? (R.hiresProof.proven ? `proven: quietest part ${R.hiresProof.quietestVs16bitDb} dB vs 16-bit floor` : `not provable (quietest part ${R.hiresProof.quietestVs16bitDb > 0 ? '+' : ''}${R.hiresProof.quietestVs16bitDb} dB vs 16-bit floor)`) : null],
+      ['Cutoff', sp.cutoffHz ? fmtKhz(sp.cutoffHz) + ` (−${sp.dropDb} dB wall)` : 'none'],
+      ['Content reaches', fmtKhz(sp.reachHz)],
+      ['Spectral holes', fp.holesPct != null ? fp.holesPct + '% (ok < 0.35)' : 'n/a'],
+      ['Band gating', fp.hfGatingDb != null ? fp.hfGatingDb + ' dB (ok < 15)' : 'n/a'],
+      ['Codec frame grid', fp.codecGrid ? `${fp.codecGrid.score}× (${fp.codecGrid.best}; ok < 1.6)` : (d.lossless === false ? 'n/a (lossy file)' : 'not run')],
+      ['Cutoff transition', sp.transitionHz ? sp.transitionHz + ' Hz (−3 to −30 dB)' : null],
+      ['Bitrate (measured)', R.bitrate && R.bitrate.measuredKbps ? `${R.bitrate.measuredKbps} kbps` + (R.bitrate.mode ? ` · ${R.bitrate.mode}${R.bitrate.minKbps !== R.bitrate.maxKbps ? ' ' + R.bitrate.minKbps + '–' + R.bitrate.maxKbps : ''}` : '') : null],
+      ['Bitrate from', R.bitrate ? R.bitrate.payloadSource : null],
+      ['vs raw PCM', R.bitrate && R.bitrate.pctOfPcm ? `${R.bitrate.pctOfPcm}% of ${R.bitrate.pcmKbps} kbps` : null],
+      ['Cutoff fits', R.bitrate && R.bitrate.cutoffImpliesKbps ? `about ${R.bitrate.cutoffImpliesKbps} kbps` : null],
+      ['Length decoded', R.defects ? fmtDur(R.defects.decodedS) + ` (${R.defects.decodedS.toFixed(2)} s)` : null],
+      ['Length in header', R.defects && R.defects.headerS ? `${R.defects.headerS.toFixed(2)} s, ${R.defects.headerSource}` : 'not stored'],
+    ]);
+    renderMastering(R);
+    dl($('dlLevels'), [
+      ['Integrated', fmtDb(m.integratedLufs, 'LUFS')], ['Loudness range', m.lraLu != null ? m.lraLu.toFixed(1) + ' LU' : '—'],
+      ['True peak', fmtDb(m.truePeakDbtp, 'dBTP')], ['Sample peak', fmtPair(m.samplePeakDbfs, 'dBFS')],
+      ['RMS', fmtPair(m.rmsDbfs, 'dBFS')], ['DC offset', m.dcOffsetPct.map(x => x.toFixed(3)).join(' / ') + ' %'],
+      ['Full-scale samples', m.fullScale.join(' / ')], ['Clip runs (≥3)', m.clipRuns.join(' / ')],
+      ['L/R correlation', m.lrCorrelation != null ? m.lrCorrelation.toFixed(3) : null],
+    ]);
+    draw();
+  }
+
+  function renderMastering(R) {
+    const ms = R.mastering, m = R.levels;
+    $('masteringPanel').hidden = !ms;
+    if (!ms) return;
+    dl($('dlMaster'), [
+      ['Integrated loudness', fmtDb(m.integratedLufs, 'LUFS')],
+      ['Loudness range (LRA)', m.lraLu != null ? m.lraLu.toFixed(1) + ' LU' : '—'],
+      ['Max short-term (3 s)', fmtDb(m.maxShortTermLufs, 'LUFS')],
+      ['Max momentary (0.4 s)', fmtDb(m.maxMomentaryLufs, 'LUFS')],
+      ['True peak', fmtDb(m.truePeakDbtp, 'dBTP')],
+      ['PLR (peak to loudness)', ms.plrDb != null ? ms.plrDb.toFixed(1) + ' dB' : '—'],
+      ['PSR (peak to short-term)', ms.psrDb != null ? ms.psrDb.toFixed(1) + ' dB' : '—'],
+      ['Crest factor', ms.crestDb != null ? ms.crestDb.toFixed(1) + ' dB' : '—'],
+      ['Side vs mid', ms.sideVsMidDb != null ? ms.sideVsMidDb.toFixed(1) + ' dB' : null],
+      ['L/R correlation', m.lrCorrelation != null ? m.lrCorrelation.toFixed(2) : null],
+      ['Clip runs (≥3)', m.clipRuns.reduce((a, b) => a + b, 0)],
+    ]);
+    const ob = ms.octaveBalanceDb || [], span = 16;
+    $('octBars').innerHTML = ob.map(([fc, v]) => {
+      if (v == null) return `<div class="octbar"><div class="track"><div class="zero"></div></div><div class="val">—</div><div class="lab">${fc >= 1000 ? fc / 1000 + 'k' : fc}</div></div>`;
+      const c = Math.max(-span, Math.min(span, v)), h = Math.abs(c) / span * 50;
+      const pos = c >= 0 ? `bottom:50%;height:${h}%` : `top:50%;height:${h}%`;
+      return `<div class="octbar" title="${fc} Hz: ${v > 0 ? '+' : ''}${v} dB"><div class="track"><div class="zero"></div><div class="fill ${c < 0 ? 'neg' : ''}" style="${pos}"></div></div><div class="val">${Math.round(v) > 0 ? '+' : ''}${Math.round(v)}</div><div class="lab">${fc >= 1000 ? fc / 1000 + 'k' : fc}</div></div>`;
+    }).join('');
+    const tag = { good: 'OK', warn: 'Note', bad: 'Problem', info: 'Info' };
+    $('masterNotes').innerHTML = (ms.notes.length ? ms.notes : [{ t: 'good', s: 'No mastering issues flagged: no clipping runs, true peak within Spotify\'s recommendation.' }]).map(x => `<li class="${x.t}"><b>${tag[x.t]}</b>${esc(x.s)}</li>`).join('');
+  }
+
+  // ------------------------------------------------------------- drawing
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  function ramp(t) { // fixed scope colormap: black → deep teal → amber → white
+    const stops = [[0, 9, 13, 12], [0.35, 18, 70, 72], [0.65, 214, 120, 30], [0.85, 245, 190, 90], [1, 255, 250, 235]];
+    for (let i = 1; i < stops.length; i++) if (t <= stops[i][0]) { const a = stops[i - 1], b = stops[i], u = (t - a[0]) / (b[0] - a[0]); return [0, 1, 2].map(j => Math.round(a[j + 1] + (b[j + 1] - a[j + 1]) * u)); }
+    return [255, 250, 235];
+  }
+  function setup(cv) { const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1; cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr); const c = cv.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0); return [c, r.width, r.height]; }
+  const PAD = { l: 40, r: 10, t: 8, b: 20 };
+  function draw() {
+    if (!current) return;
+    if (!current.plot) {
+      for (const id of ['specgram', 'curve']) { const [c, W, Hh] = setup($(id)); c.fillStyle = css('--scope'); c.fillRect(0, 0, W, Hh); c.fillStyle = css('--scope-text'); c.font = '13px ' + css('--f-mono'); c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(id === 'specgram' ? 'No decoded audio to show' : '', W / 2, Hh / 2); }
+      return;
+    }
+    const { R, plot } = current, nyq = plot.nyq, fc = R.spectral && R.spectral.cutoffHz;
+    const grid = css('--scope-grid'), txt = css('--scope-text'), trace = css('--trace'), bad = css('--bad');
+    // spectrogram
+    let [c, W, Hh] = setup($('specgram'));
+    c.fillStyle = css('--scope'); c.fillRect(0, 0, W, Hh);
+    const pw = W - PAD.l - PAD.r, ph = Hh - PAD.t - PAD.b;
+    if (plot.cols) {
+      const img = c.createImageData(plot.cols, plot.rows);
+      for (let x = 0; x < plot.cols; x++) for (let y = 0; y < plot.rows; y++) { const v = plot.img[x * plot.rows + y] / 255, [r, g, b] = ramp(v), o = ((plot.rows - 1 - y) * plot.cols + x) * 4; img.data[o] = r; img.data[o + 1] = g; img.data[o + 2] = b; img.data[o + 3] = 255; }
+      const tmp = document.createElement('canvas'); tmp.width = plot.cols; tmp.height = plot.rows; tmp.getContext('2d').putImageData(img, 0, 0);
+      c.imageSmoothingEnabled = true; c.drawImage(tmp, PAD.l, PAD.t, pw, ph);
+    }
+    c.font = '11px ' + css('--f-mono'); c.fillStyle = txt; c.textAlign = 'right'; c.textBaseline = 'middle';
+    const kstep = nyq > 50000 ? 20000 : nyq > 30000 ? 10000 : 5000;
+    for (let f = 0; f <= nyq; f += kstep) { const y = PAD.t + ph - f / nyq * ph; c.fillText(f / 1000 + 'k', PAD.l - 6, y); }
+    c.textAlign = 'center'; c.textBaseline = 'top';
+    const tstep = plot.duration > 300 ? 60 : plot.duration > 90 ? 30 : plot.duration > 30 ? 10 : 5;
+    for (let t = 0; t <= plot.duration; t += tstep) c.fillText(t >= 60 ? `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}` : t + 's', PAD.l + t / plot.duration * pw, PAD.t + ph + 4);
+    if (fc) { const y = PAD.t + ph - fc / nyq * ph; c.strokeStyle = bad; c.setLineDash([4, 4]); c.beginPath(); c.moveTo(PAD.l, y); c.lineTo(PAD.l + pw, y); c.stroke(); c.setLineDash([]); }
+    // curve
+    [c, W, Hh] = setup($('curve'));
+    c.fillStyle = css('--scope'); c.fillRect(0, 0, W, Hh);
+    const cw = W - PAD.l - PAD.r, chh = Hh - PAD.t - PAD.b, lo = -160, hi = -10;
+    const X = f => PAD.l + f / nyq * cw, Y = db => PAD.t + (hi - Math.max(lo, Math.min(hi, db))) / (hi - lo) * chh;
+    c.strokeStyle = grid; c.lineWidth = 1; c.font = '11px ' + css('--f-mono'); c.fillStyle = txt;
+    c.textAlign = 'right'; c.textBaseline = 'middle';
+    for (let db = -150; db <= -10; db += 20) { const y = Y(db); c.beginPath(); c.moveTo(PAD.l, y); c.lineTo(PAD.l + cw, y); c.stroke(); c.fillText(db, PAD.l - 6, y); }
+    c.textAlign = 'center'; c.textBaseline = 'top';
+    for (let f = 0; f <= nyq; f += kstep) c.fillText(f / 1000 + 'k', X(f), PAD.t + chh + 4);
+    const refs = [[16000, '16k'], [19500, '19.5k'], [20500, '20.5k'], [22050, '22.05k'], [24000, '24k']].filter(r => r[0] < nyq * 0.995);
+    c.setLineDash([2, 3]); c.font = '10px ' + css('--f-mono');
+    refs.forEach(([f, l], i) => { const x = X(f); c.beginPath(); c.moveTo(x, PAD.t); c.lineTo(x, PAD.t + chh); c.stroke(); if (cw > 500 || i % 2 === 0) { c.save(); c.translate(x + 3, PAD.t + 4); c.rotate(Math.PI / 2); c.textAlign = 'left'; c.fillText(l, 0, 0); c.restore(); } });
+    c.setLineDash([]);
+    // area + line
+    const pts = plot.curve, n = pts.length;
+    c.beginPath(); c.moveTo(X(0), Y(lo));
+    for (let i = 0; i < n; i++) c.lineTo(X(i / (n - 1) * nyq), Y(pts[i]));
+    c.lineTo(X(nyq), Y(lo)); c.closePath();
+    c.globalAlpha = 0.18; c.fillStyle = trace; c.fill(); c.globalAlpha = 1;
+    c.beginPath(); for (let i = 0; i < n; i++) { const x = X(i / (n - 1) * nyq), y = Y(pts[i]); i ? c.lineTo(x, y) : c.moveTo(x, y); }
+    c.strokeStyle = trace; c.lineWidth = 1.5; c.stroke();
+    if (fc) {
+      const x = X(fc); c.strokeStyle = bad; c.lineWidth = 2; c.beginPath(); c.moveTo(x, PAD.t); c.lineTo(x, PAD.t + chh); c.stroke();
+      c.fillStyle = bad; c.font = '600 12px ' + css('--f-mono'); c.textBaseline = 'top';
+      const label = 'cutoff ' + (fc / 1000).toFixed(1) + ' kHz'; const tw = c.measureText(label).width;
+      c.textAlign = x + 8 + tw > PAD.l + cw ? 'right' : 'left'; c.fillText(label, c.textAlign === 'right' ? x - 8 : x + 8, PAD.t + chh * 0.55);
+    }
+  }
+  let rT; window.addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(draw, 120); });
+  try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => setTimeout(draw, 50)); } catch (e) {}
+  new MutationObserver(() => setTimeout(draw, 50)).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  // ------------------------------------------------------------ live run
+  function plotFromLive(R) {
+    const P = R._plot, nf = P.freqs.length, curve = [], pts = 800;
+    for (let i = 0; i < pts; i++) curve.push(P.D[Math.round(i / (pts - 1) * (nf - 1))]);
+    const cols = Math.min(600, P.spectra.length), rows = 220, img = new Uint8Array(cols * rows);
+    for (let x = 0; x < cols; x++) { const s = P.spectra[Math.floor(x / cols * P.spectra.length)];
+      for (let y = 0; y < rows; y++) { const k0 = Math.floor(y / rows * nf), k1 = Math.max(k0 + 1, Math.floor((y + 1) / rows * nf)); let mx = -200; for (let k = k0; k < k1; k++) if (s[k] > mx) mx = s[k]; img[x * rows + y] = Math.max(0, Math.min(255, Math.round((mx + 140) / 120 * 255))); } }
+    return { curve, nyq: R.analysisRate / 2, duration: P.duration, cols, rows, img };
+  }
+  const busy = (on, text, p) => { $('busy').hidden = !on; if (text) $('busyText').textContent = text; if (p != null) { $('bar').style.width = Math.round(p * 100) + '%'; $('busyPct').textContent = Math.round(p * 100) + '%'; } };
+  const showErr = msg => { $('err').hidden = !msg; $('err').textContent = msg || ''; };
+
+  async function decode(buf, rate) {
+    const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const tryRate = async r => { const ctx = new OAC(1, 1, r); return await new Promise((res, rej) => { const p = ctx.decodeAudioData(buf.slice(0), res, rej); if (p && p.then) p.then(res, rej); }); };
+    try { return { audio: await tryRate(rate), rate }; }
+    catch (e) { if (rate !== 48000) { try { return { audio: await tryRate(48000), rate: 48000 }; } catch (e2) {} } throw e; }
+  }
+
+  const BROWSER_OK = new Set(['PCM', 'PCM float', 'FLAC', 'MP3', 'MP2', 'AAC', 'Vorbis', 'Opus']);
+  async function analyzeOne(file, tag) {
+    const buf = await file.arrayBuffer(), bytes = new Uint8Array(buf);
+    const sig = AudioCheck.detectSignature(bytes), H = AudioCheck.parseHeader(bytes, sig);
+    const want = H.codec === 'Opus' ? 48000 : (H.sampleRate && H.sampleRate >= 8000 && H.sampleRate <= 384000 ? H.sampleRate : 48000);
+    busy(true, tag + 'decoding…', null);
+    let dec = null;
+    try { dec = await decode(buf, want); } catch (e) { dec = null; }
+    if (!dec || !dec.audio.length) {
+      const R = await AudioCheck.analyze({ bytes, name: file.name });
+      const d = R.declared, normallyOk = BROWSER_OK.has(d.codec);
+      const claimed = `${d.codec || R.signature} · ${d.sampleRate ? d.sampleRate / 1000 + ' kHz' : '? kHz'}${d.bits ? ' · ' + d.bits + '-bit' : ''}`;
+      R.verdict = normallyOk
+        ? { status: 'unreadable', confidence: 'n/a', headline: `Unreadable ${d.codec || R.signature} file`, claimed, real: 'could not be decoded',
+            details: [...R.containerCheck.map(s => ({ t: 'bad', s })),
+              { t: 'bad', s: `This browser normally plays ${d.codec}, but this file failed to decode. It is most likely corrupted or truncated.` }] }
+        : { status: 'header', confidence: 'n/a', headline: `${R.signature}${d.codec && d.codec !== R.signature ? ' · ' + d.codec : ''}: header checked, audio not analysed`, claimed, real: 'unknown without decoding',
+            details: [...R.containerCheck.map(s => ({ t: 'bad', s })),
+              ...(R.containerCheck.length ? [] : [{ t: 'good', s: `The extension matches the real file type (${R.signature}).` }]),
+              { t: 'info', s: `This browser can't decode ${d.codec || R.signature} audio, so bit depth, bandwidth and loudness weren't measured. Safari decodes ALAC; for APE, WavPack, DSD or WMA convert to FLAC first.` }] };
+      R.levels = null; R.spectral = null; R.fingerprint = null;
+      return { R, plot: null };
+    }
+    const chs = []; for (let c = 0; c < dec.audio.numberOfChannels; c++) chs.push(dec.audio.getChannelData(c));
+    const R = await AudioCheck.analyze({ bytes, name: file.name, decoded: { channels: chs, length: dec.audio.length }, decodeRate: dec.rate,
+      progress: p => busy(true, tag + (p < 0.5 ? 'analysing spectrum…' : p < 0.6 ? 'checking codec fingerprints…' : p < 0.85 ? 'testing AAC/Vorbis frame grid (slow)…' : 'measuring loudness…'), p) });
+    const plot = plotFromLive(R); delete R._plot;
+    return { R, plot };
+  }
+
+  let results = [];
+  const ORDER = { defective: 0, unreadable: 0, fail: 1, maybe: 2, header: 3, lossy: 4, pass: 5 };
+  async function handle(fileList) {
+    const files = [...fileList].filter(Boolean);
+    if (!files.length) return;
+    showErr(''); results = [];
+    $('batch').hidden = files.length < 2;
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i], tag = files.length > 1 ? `File ${i + 1} of ${files.length} · ${f.name}: ` : `${f.name}: `;
+      busy(true, tag + 'reading…', 0);
+      try { results.push(await analyzeOne(f, tag)); }
+      catch (e) { results.push({ R: { file: f.name, sizeBytes: f.size, error: String(e && e.message || e) }, plot: null }); }
+      if (files.length > 1) renderTable();
+    }
+    busy(false);
+    const shown = results.filter(r => !r.R.error);
+    if (!shown.length) { showErr('Could not analyse ' + (files.length > 1 ? 'these files' : 'this file') + ': ' + results[0].R.error + '. Try a different file or browser.'); return; }
+    const first = files.length > 1 ? [...shown].sort((a, b) => ((b.R.score || {}).total ?? -1) - ((a.R.score || {}).total ?? -1))[0] : shown[0];
+    render(first.R, first.plot, false); markRow(first);
+    (files.length > 1 ? $('batch') : $('result')).scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+  }
+
+  function renderTable() {
+    const sv = r => r.R.error ? -2 : (r.R.score ? r.R.score.total : -1);
+    const rows = [...results].sort((a, b) => sv(b) - sv(a) || a.R.file.localeCompare(b.R.file));
+    const counts = {};
+    rows.forEach(r => { const s = r.R.error ? 'unreadable' : r.R.verdict.status; counts[s] = (counts[s] || 0) + 1; });
+    $('batchSummary').textContent = `${results.length} file${results.length > 1 ? 's' : ''}: ` + Object.keys(counts).sort((a, b) => ORDER[a] - ORDER[b]).map(k => `${counts[k]} ${PILL[k][0].toLowerCase()}`).join(' · ');
+    const tb = $('batchBody'); tb.innerHTML = '';
+    rows.forEach(r => {
+      const R = r.R, st = R.error ? 'unreadable' : R.verdict.status, tr = document.createElement('tr');
+      const lv = R.levels || {};
+      tr.innerHTML = `<td class="num"><b>${R.score ? R.score.total.toFixed(1) : '—'}</b></td><td><span class="chip ${st}">${PILL[st][0]}</span></td><td class="mono">${esc(R.file)}</td><td>${esc(R.error ? 'Could not analyse: ' + R.error : R.verdict.headline)}</td>`
+        + `<td class="num">${R.bitrate && R.bitrate.measuredKbps ? R.bitrate.measuredKbps : '—'}</td><td class="num">${R.spectral && R.spectral.cutoffHz ? (R.spectral.cutoffHz / 1000).toFixed(1) : '—'}</td><td class="num">${lv.integratedLufs != null ? lv.integratedLufs.toFixed(1) : '—'}</td><td class="num">${lv.lraLu != null ? lv.lraLu.toFixed(1) : '—'}</td><td class="num">${lv.truePeakDbtp != null ? lv.truePeakDbtp.toFixed(1) : '—'}</td><td class="num">${R.mastering && R.mastering.plrDb != null ? R.mastering.plrDb.toFixed(1) : '—'}</td><td class="num">${lv.clipRuns ? lv.clipRuns.reduce((a, b) => a + b, 0) : '—'}</td>`;
+      if (!R.error) { tr.tabIndex = 0; tr.addEventListener('click', () => { render(R, r.plot, false); markRow(r); $('result').scrollIntoView({ block: 'start', behavior: 'smooth' }); });
+        tr.addEventListener('keydown', e => { if (e.key === 'Enter') tr.click(); }); }
+      tr._item = r; tb.appendChild(tr);
+    });
+  }
+  function markRow(item) { [...$('batchBody').children].forEach(tr => tr.classList.toggle('sel', tr._item === item)); }
+  $('copyTable').addEventListener('click', () => {
+    const t = ['Score\tStatus\tFile\tVerdict\tkbps\tCutoff kHz\tLUFS\tLRA\tTrue peak\tPLR\tClip runs'].concat([...$('batchBody').children].map(tr => [...tr.children].map(td => td.innerText).join('\t'))).join('\n');
+    const ta = $('copyText');
+    const fb = () => { ta.hidden = false; ta.value = t; ta.focus(); ta.select(); $('copyTable').textContent = 'Select and copy the text below'; };
+    try { navigator.clipboard.writeText(t).then(() => { $('copyTable').textContent = 'Copied'; setTimeout(() => $('copyTable').textContent = 'Copy table', 1800); }, fb); } catch (e) { fb(); }
+  });
+
+  $('file').addEventListener('change', e => { handle(e.target.files); e.target.value = ''; });
+  $('pick').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } });
+  const drop = $('drop');
+  ['dragenter', 'dragover'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(t => document.addEventListener(t, e => { e.preventDefault(); if (t === 'drop' || e.target === document.documentElement) drop.classList.remove('over'); }));
+  document.addEventListener('drop', e => { const f = e.dataTransfer && e.dataTransfer.files; if (f && f.length) handle(f); });
+
+  // ---------------------------------------------------------- copy report
+  function reportText() {
+    const { R } = current, d = R.declared, v = R.verdict, m = R.levels || {}, sp = R.spectral || {}, fp = R.fingerprint || {};
+    if (v.status === 'header') return [`AudioCheck — ${R.file}`, `Header only: ${v.claimed}`, ...v.details.map(x => ' - ' + x.s)].join('\n');
+    const L = [`AudioCheck — ${R.file}`, `Claims to be: ${v.claimed}`, `Verdict: ${PILL[v.status][0]} — ${v.headline} (confidence ${v.confidence})`,
+      `Real: ${fmtKhz(v.realRate)} · ${v.realBits}`,
+      ...(R.score ? [`Quality score: ${R.score.total}/100 (authenticity ${R.score.authenticity}/40, cleanliness ${R.score.cleanliness}/40, proven 24-bit ${R.score.proven24}/10, dynamics ${R.score.dynamics}/10)`] : []),
+      ...(R.vinyl ? [`Vinyl check: ${R.vinyl.level} (${R.vinyl.points}/6; side ${R.vinyl.band} Hz ${R.vinyl.sideVsMidDb} dB vs mid, ${R.vinyl.sideVsBassDb} dB vs side 40–80 Hz, hump ${R.vinyl.humpDb} dB)`] : []),
+      ...(R.hiresProof ? [`24-bit proof: ${R.hiresProof.proven ? 'proven' : 'not provable'} (quietest part ${R.hiresProof.quietestVs16bitDb} dB vs 16-bit floor)`] : []), '', 'Evidence:', ...v.details.map(x => ' - ' + x.s), '',
+      `Format: ${R.signature} / ${d.codec} · ext .${R.extension}`, `Cutoff: ${sp.cutoffHz ? fmtKhz(sp.cutoffHz) : 'none'} · reach ${fmtKhz(sp.reachHz)}`,
+      `Holes: ${fp.holesPct ?? 'n/a'}% · gating ${fp.hfGatingDb ?? 'n/a'} dB`,
+      `Bitrate: ${R.bitrate && R.bitrate.measuredKbps ? R.bitrate.measuredKbps + ' kbps measured' : 'n/a'}${R.bitrate && R.bitrate.pctOfPcm ? ' (' + R.bitrate.pctOfPcm + '% of raw PCM)' : ''}`,
+      `Loudness: ${fmtDb(m.integratedLufs, 'LUFS')} · LRA ${m.lraLu != null ? m.lraLu.toFixed(1) : '—'} LU · TP ${fmtDb(m.truePeakDbtp, 'dBTP')}`,
+      ...(R.mastering ? [`Mastering: PLR ${R.mastering.plrDb} dB · PSR ${R.mastering.psrDb} dB · crest ${R.mastering.crestDb} dB · side vs mid ${R.mastering.sideVsMidDb ?? 'n/a'} dB`,
+        'Octave balance vs 1 kHz: ' + (R.mastering.octaveBalanceDb || []).map(([f, v]) => `${f}:${v ?? '—'}`).join(' '),
+        ...R.mastering.notes.map(x => ' - ' + x.s)] : [])];
+    return L.join('\n');
+  }
+  $('copyBtn').addEventListener('click', () => {
+    const t = reportText(), ta = $('copyText');
+    const fallback = () => { ta.hidden = false; ta.value = t; ta.focus(); ta.select(); $('copyBtn').textContent = 'Select and copy the text below'; };
+    try { navigator.clipboard.writeText(t).then(() => { $('copyBtn').textContent = 'Copied'; ta.hidden = true; setTimeout(() => $('copyBtn').textContent = 'Copy report as text', 1800); }, fallback); } catch (e) { fallback(); }
+  });
+  function showExample() {
+    const p = EXAMPLE.plot, bin = atob(p.img), img = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) img[i] = bin.charCodeAt(i);
+    render(EXAMPLE.report, { ...p, img }, true);
+  }
+  $('exampleBtn').addEventListener('click', showExample);
+  showExample();
+})();
+</script>
+
+</body>
+</html>
