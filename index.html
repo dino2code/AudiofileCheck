@@ -233,7 +233,7 @@ h1, h2, h3 { font-family: var(--f-display); font-weight: 600; margin: 0; text-wr
       <li>A low-pass between 19.5 and 20.9 kHz with a gentle slope (wider than 800 Hz from −3 to −30 dB, and less than 32 dB deep) is treated as a likely mastering filter, not proof of a lossy source; lossy encoders measured here cut within 150–620 Hz.</li>
       <li><b>Spectral holes</b> and <b>band gating</b> are supporting fingerprints of lossy codecs, tuned on test signals rather than on a large music library, so treat them as hints.</li>
       <li>A 20 kHz wall can also come from mastering. "Genuine" means no evidence against the file was found, not proof that it is clean.</li>
-      <li><b>Quality score</b> (0–100) rates how genuine and clean a file is. Authenticity is 40 points (a real lossless file that matches its label gets all 40). Cleanliness is 40: no clipping runs, true peak (full marks at −1 dBTP or lower, none at +2), no damage or truncation, no DC offset, full bandwidth. Proven 24-bit is 10, awarded only when the quietest part of the track sits at least 10 dB below what 16-bit can represent; a file that is really 24-bit but never gets that quiet is not penalised, it simply can't earn these points. Dynamics (PLR and LRA) is 10. The weights are this tool's own choice, not an industry standard.</li>
+      <li><b>Quality score</b> (0–100) rates how genuine and clean a file is. Authenticity is 40 points (a real lossless file that matches its label gets all 40). Cleanliness is 40: no clipping runs (including clipping at a ceiling below 0 dBFS, found as 4 or more samples stuck at the file's own peak), true peak (full marks at −1 dBTP or lower, none at +2), no damage or truncation, no DC offset, full bandwidth. Proven 24-bit is 10, awarded only when the quietest part of the track sits at least 10 dB below what 16-bit can represent; a file that is really 24-bit but never gets that quiet is not penalised, it simply can't earn these points. Dynamics (PLR and LRA) is 10. The weights are this tool's own choice, not an industry standard.</li>
       <li><b>Vinyl check</b> looks for the low-frequency fingerprint of a record: warps move the stylus up and down, a stereo cartridge turns that into an out-of-phase (side) signal, and the tonearm resonance (about 8–15 Hz) boosts it. Digital masters keep content below 20 Hz mono and tiny. "Likely" needs a side-channel hump that is at least as strong as the mid channel there. It was tuned on a small set of files, so treat it as a strong hint, not proof; a rip with a strong subsonic filter can hide it. It does not change the quality score.</li>
       <li><b>Mastering</b> numbers describe the production, not the file's honesty. PLR is true peak minus integrated loudness and PSR is true peak minus the loudest 3-second moment; low values (under about 9 dB) mean heavy limiting. Tonal balance is the whole-track level of each octave relative to the 1 kHz octave. Streaming checks use Spotify's published guidance: normalisation to −14 LUFS, true peak at or below −1 dBTP, or −2 dBTP for masters louder than −14 LUFS (<a href="https://support.spotify.com/au/artists/article/loudness-normalization/" target="_blank" rel="noopener">Spotify for Artists</a>). LRA follows <a href="https://tech.ebu.ch/docs/tech/tech3342.pdf" target="_blank" rel="noopener">EBU Tech 3342</a>.</li>
       <li>Loudness follows ITU-R BS.1770 / EBU R128 (integrated LUFS, LRA). True peak uses 4× oversampling. Checked against ffmpeg: loudness within 0.1 LU, true peak within about 0.2 dB for lossless files. For MP3 and other lossy files the browser's own decoder can flatten overs, so true peak may read up to about 1 dB low.</li>
@@ -956,6 +956,8 @@ function masteringMetrics(st, freqs, lv, sr, ch, lossy) {
   if (clips) notes.push(lossy
     ? { t: 'warn', s: `${clips} runs of full-scale samples after decoding. In a lossy file the browser's decoder clamps overs to full scale, so these may come from decoding rather than from the master.` }
     : { t: 'bad', s: `${clips} clipping runs (3 or more consecutive full-scale samples). The master is clipped.` });
+  const cc = lv.ceilingClip;
+  if (cc && cc.runs > clips) notes.push({ t: 'bad', s: `Clipped at a ceiling of ${cc.ceilingDbfs} dBFS: ${cc.runs} flat-topped runs (4 or more samples stuck at the peak, longest ${cc.longest}). A clipper or brickwall was set below 0 dBFS; the waveform between samples overshoots, which is why true peak is higher than the sample peak.` });
   if (tp != null && I != null) {
     const lim = I > -14 ? -2 : -1;
     if (tp > lim) notes.push({ t: 'warn', s: `True peak ${tp > 0 ? '+' : ''}${tp.toFixed(1)} dBTP is above Spotify's ${lim} dBTP recommendation for a master at ${I.toFixed(1)} LUFS, so it may distort when encoded for streaming.` });
@@ -1086,6 +1088,25 @@ function verdict(R) {
 }
 
 // --------------------------------------------------------------- pipeline
+// Clipping at a ceiling below 0 dBFS: runs of >=4 consecutive samples within 0.01% of the file's own maximum.
+// Only checked when the peak is above -3 dBFS (a pure low sine also lingers at its top). Same rule as the Python tool.
+function ceilingClip(chs, lossy) {
+  let peak = 0;
+  for (const c of chs) for (let i = 0; i < c.length; i++) { const v = Math.abs(c[i]); if (v > peak) peak = v; }
+  if (!peak || peak < Math.pow(10, -3 / 20)) return null;
+  if (lossy && peak >= 0.999) return null; // the browser's lossy decoder clamps overs to full scale
+  const thr = peak * (1 - 1e-4);
+  let runs = 0, longest = 0, flat = 0;
+  for (const c of chs) {
+    let n = 0;
+    for (let i = 0; i <= c.length; i++) {
+      if (i < c.length && Math.abs(c[i]) >= thr) n++;
+      else { if (n >= 4) { runs++; flat += n; if (n > longest) longest = n; } n = 0; }
+    }
+  }
+  return { ceilingDbfs: Math.round(20 * Math.log10(peak) * 100) / 100, runs, flatSamples: flat, longest };
+}
+
 // Vinyl-rip signature: record warps -> vertical stylus motion -> SIDE (L-R) signal, amplified by the tonearm/cartridge
 // resonance (~8-15 Hz). Digital masters keep sub-20 Hz content mono and tiny. Same thresholds as the Python tool.
 async function vinylCheck(chs, sr) {
@@ -1145,7 +1166,7 @@ async function hiresProof(x, sr) {
 function qualityScore(R) {
   const cl = v => Math.max(0, Math.min(1, v)), v = R.verdict, lv = R.levels || {}, st = v.status;
   const A = { pass: v.confidence === 'high' ? 40 : 35, maybe: 20, lossy: 15, fail: 5, defective: 0 }[st] ?? 0;
-  const clips = (lv.clipRuns || [0]).reduce((a, b) => a + b, 0);
+  const clips = Math.max((lv.clipRuns || [0]).reduce((a, b) => a + b, 0), (lv.ceilingClip && lv.ceilingClip.runs) || 0);
   const cClip = clips === 0 ? 12 : clips <= 5 ? 9 : clips <= 50 ? 5 : 0;
   const tp = lv.truePeakDbtp;
   const cTp = tp != null && isFinite(tp) ? Math.round(120 * cl((2 - tp) / 3)) / 10 : 6;
@@ -1205,6 +1226,7 @@ async function analyze({ bytes, name, decoded, decodeRate, progress = () => {} }
   };
   Object.assign(lv, loudness(chs, sr)); progress(0.93); await tick();
   lv.truePeakDbtp = truePeak(chs, sr, [...st.peak]);
+  try { lv.ceilingClip = ceilingClip(chs, H.lossless === false); } catch (e) { }
   if (chs.length >= 2) {
     lv.lrCorrelation = st.ll > 0 && st.rr > 0 ? st.lr / Math.sqrt(st.ll * st.rr) : null;
     if (st.maxdiff === 0) lv.stereoNote = 'left and right are bit-identical (dual mono, fake stereo).';
@@ -1301,7 +1323,7 @@ const EXAMPLE = {"report":{"file":"example_96k_from_mp3.flac","sizeBytes":612494
       ['Integrated', fmtDb(m.integratedLufs, 'LUFS')], ['Loudness range', m.lraLu != null ? m.lraLu.toFixed(1) + ' LU' : '—'],
       ['True peak', fmtDb(m.truePeakDbtp, 'dBTP')], ['Sample peak', fmtPair(m.samplePeakDbfs, 'dBFS')],
       ['RMS', fmtPair(m.rmsDbfs, 'dBFS')], ['DC offset', m.dcOffsetPct.map(x => x.toFixed(3)).join(' / ') + ' %'],
-      ['Full-scale samples', m.fullScale.join(' / ')], ['Clip runs (≥3)', m.clipRuns.join(' / ')],
+      ['Full-scale samples', m.fullScale.join(' / ')], ['Clip runs (≥3)', m.clipRuns.join(' / ')], ['Ceiling clipping', m.ceilingClip ? (m.ceilingClip.runs ? `${m.ceilingClip.runs} flat runs at ${m.ceilingClip.ceilingDbfs} dBFS` : 'none') : null],
       ['L/R correlation', m.lrCorrelation != null ? m.lrCorrelation.toFixed(3) : null],
     ]);
     draw();
@@ -1322,7 +1344,7 @@ const EXAMPLE = {"report":{"file":"example_96k_from_mp3.flac","sizeBytes":612494
       ['Crest factor', ms.crestDb != null ? ms.crestDb.toFixed(1) + ' dB' : '—'],
       ['Side vs mid', ms.sideVsMidDb != null ? ms.sideVsMidDb.toFixed(1) + ' dB' : null],
       ['L/R correlation', m.lrCorrelation != null ? m.lrCorrelation.toFixed(2) : null],
-      ['Clip runs (≥3)', m.clipRuns.reduce((a, b) => a + b, 0)],
+      ['Clip runs (≥3)', Math.max(m.clipRuns.reduce((a, b) => a + b, 0), (m.ceilingClip && m.ceilingClip.runs) || 0) + (m.ceilingClip && m.ceilingClip.runs ? ` (at ${m.ceilingClip.ceilingDbfs} dBFS)` : '')],
     ]);
     const ob = ms.octaveBalanceDb || [], span = 16;
     $('octBars').innerHTML = ob.map(([fc, v]) => {
@@ -1484,7 +1506,7 @@ const EXAMPLE = {"report":{"file":"example_96k_from_mp3.flac","sizeBytes":612494
       const R = r.R, st = R.error ? 'unreadable' : R.verdict.status, tr = document.createElement('tr');
       const lv = R.levels || {};
       tr.innerHTML = `<td class="num"><b>${R.score ? R.score.total.toFixed(1) : '—'}</b></td><td><span class="chip ${st}">${PILL[st][0]}</span></td><td class="mono">${esc(R.file)}</td><td>${esc(R.error ? 'Could not analyse: ' + R.error : R.verdict.headline)}</td>`
-        + `<td class="num">${R.bitrate && R.bitrate.measuredKbps ? R.bitrate.measuredKbps : '—'}</td><td class="num">${R.spectral && R.spectral.cutoffHz ? (R.spectral.cutoffHz / 1000).toFixed(1) : '—'}</td><td class="num">${lv.integratedLufs != null ? lv.integratedLufs.toFixed(1) : '—'}</td><td class="num">${lv.lraLu != null ? lv.lraLu.toFixed(1) : '—'}</td><td class="num">${lv.truePeakDbtp != null ? lv.truePeakDbtp.toFixed(1) : '—'}</td><td class="num">${R.mastering && R.mastering.plrDb != null ? R.mastering.plrDb.toFixed(1) : '—'}</td><td class="num">${lv.clipRuns ? lv.clipRuns.reduce((a, b) => a + b, 0) : '—'}</td>`;
+        + `<td class="num">${R.bitrate && R.bitrate.measuredKbps ? R.bitrate.measuredKbps : '—'}</td><td class="num">${R.spectral && R.spectral.cutoffHz ? (R.spectral.cutoffHz / 1000).toFixed(1) : '—'}</td><td class="num">${lv.integratedLufs != null ? lv.integratedLufs.toFixed(1) : '—'}</td><td class="num">${lv.lraLu != null ? lv.lraLu.toFixed(1) : '—'}</td><td class="num">${lv.truePeakDbtp != null ? lv.truePeakDbtp.toFixed(1) : '—'}</td><td class="num">${R.mastering && R.mastering.plrDb != null ? R.mastering.plrDb.toFixed(1) : '—'}</td><td class="num">${lv.clipRuns ? Math.max(lv.clipRuns.reduce((a, b) => a + b, 0), (lv.ceilingClip && lv.ceilingClip.runs) || 0) : '—'}</td>`;
       if (!R.error) { tr.tabIndex = 0; tr.addEventListener('click', () => { render(R, r.plot, false); markRow(r); $('result').scrollIntoView({ block: 'start', behavior: 'smooth' }); });
         tr.addEventListener('keydown', e => { if (e.key === 'Enter') tr.click(); }); }
       tr._item = r; tb.appendChild(tr);
